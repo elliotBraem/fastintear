@@ -3,25 +3,77 @@
 > [!WARNING]
 > This package is an experimental fork of [@fastnear/js-monorepo](https://github.com/fastnear/js-monorepo) that has some minor package improvements (will make their way upstream) and exclusively uses [INTEAR Wallet](https://github.com/INTEARnear/wallet).
 
-```typescript
-import * as near from "fastintear";
+## Installation & Integration
 
-near.config({ networkId: "mainnet" });
+### Script Tag (IIFE) - Static HTML
 
-near.requestSignIn();
-
-near.signMessage(...);
-
-near.sendTx(...);
-
-near.signOut();
+```html
+<script src="https://cdn.jsdelivr.net/npm/fastintear/dist/umd/browser.global.js"></script>
+<script>
+  // Global `near` object is now available
+  near.config({ networkId: "mainnet" });
+  
+  // Also available: window.$$ = near.utils.convertUnit
+  const amount = $$`1 NEAR`; // "1000000000000000000000000"
+</script>
 ```
 
-## general
+### Install & Import
+
+```bash
+npm install fastintear
+# or
+yarn add fastintear
+```
+
+### Import
+
+```typescript
+import * as near from "fastintear";
+// or for specific imports with full type safety
+import { 
+  config, 
+  requestSignIn, 
+  sendTx, 
+  actions, 
+  event,
+  type Action,
+  type TxStatus 
+} from "fastintear";
+
+// Configure network
+near.config({ networkId: "mainnet" });
+
+// Sign in with contract for LAK signing
+await near.requestSignIn({ contractId: "your-contract.near" });
+
+// Send transaction (uses LAK if conditions met, wallet popup otherwise)
+await near.sendTx({
+  receiverId: "your-contract.near",
+  actions: [
+    near.actions.functionCall({
+      methodName: "your_method",
+      args: { key: "value" },
+      gas: "30000000000000",
+      deposit: "0"
+    })
+  ]
+});
+
+// Listen for transaction updates
+near.event.onTx((txStatus: TxStatus) => {
+  console.log(`Transaction ${txStatus.txId}: ${txStatus.status}`);
+});
+
+// Sign out
+await near.signOut();
+```
+
+## General
 
 This is a workspace package from the [@fastnear/js-monorepo](https://github.com/fastnear/js-monorepo) that has the primary responsibility. It's what creates the global `near` object.
 
-## technical
+## Technical
 
 ### Node.js decoupling
 
@@ -31,7 +83,7 @@ For instance `Buffer.from()` is an example of a Node.js feature that is commonly
 
 So it *is* possible to have a web3 library that's decoupled from Node.js
 
-### what this means
+### What this means
 
 Some emergent behavior comes as a result of this.
 
@@ -44,8 +96,12 @@ In `tsup.config.ts`, you find TypeScript compilations targets. We feel preferent
 
 If you look in the `dist` directory under `umd` (Universal Module Definition, but it seems IIFE fits better as a term) there is one file. At the bottom of the file you'll see how the global `near` object can undergo some modifications, potentially hardening it further as this library develops.
 
-## alpha version
+## Documentation
 
-The focus thus far has been of a highly technical nature, and after releasing this alpha version the devs will let their minds gestate. then this file will fill out with more meaningful info and snippets. 🙏🏼
+For comprehensive implementation details, API reference, and advanced usage patterns, see the [LLM.txt](./LLM.txt) file which contains detailed documentation designed for both developers and AI systems.
 
-Make sure to visit the [project-level README](https://github.com/fastnear/js-monorepo#global-near-js)
+## Status
+
+This package provides a complete, production-ready SDK for NEAR Protocol with browser-first design and INTEAR Wallet integration. The core functionality is stable and feature-complete.
+
+Make sure to visit the [project-level README](https://github.com/fastnear/js-monorepo#global-near-js) for more information about the monorepo structure.

@@ -5,7 +5,7 @@ import { Hex } from "@noble/curves/abstract/utils";
 
 export { sha256 };
 
-export const keyFromString = (key) =>
+export const keyFromString = (key: string): Uint8Array =>
   fromBase58(
     key.includes(":")
       ? (() => {

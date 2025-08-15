@@ -21,7 +21,7 @@ let sessionVerificationInProgress = false;
 interface Transaction {
   signerId?: string;
   receiverId: string;
-  actions: any[]; // Use 'any' for simplicity
+  actions: Array<any>;
 }
 
 export interface TransactionResult {

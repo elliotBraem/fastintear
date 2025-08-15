@@ -12,7 +12,8 @@ import {
   signHash,
   toBase58,
   toBase64,
-  tryParseJson
+  tryParseJson,
+  base64ToBytes
 } from "@fastnear/utils";
 import Big from "big.js";
 
@@ -127,6 +128,7 @@ import {
   getConfig,
   resetTxHistory,
   setConfig,
+  type NetworkConfig,
 } from "./state.js";
 
 import * as reExportAllUtils from "@fastnear/utils";
@@ -277,7 +279,7 @@ export function generateTxId(): string {
 let lastAccountCheckTime = 0;
 const ACCOUNT_CHECK_INTERVAL = 60000; // 1 minute
 
-export const accountId = () => {
+export const accountId = (): string | null => {
   const currentTime = Date.now();
   
   // only trigger check if enough time has passed since last check
@@ -297,13 +299,13 @@ export const accountId = () => {
   return _state.accountId;
 };
 
-export const publicKey = () => _state.publicKey;
+export const publicKey = (): string | null => _state.publicKey;
 
-export const config = (newConfig?: Record<string, any>) => {
+export const config = (newConfig?: Partial<NetworkConfig>): NetworkConfig => {
   const current = getConfig();
   if (newConfig) {
     if (newConfig.networkId && current.networkId !== newConfig.networkId) {
-      setConfig(newConfig.networkId);
+      setConfig({ ...NETWORKS[newConfig.networkId], networkId: newConfig.networkId });
       update({ accountId: null, privateKey: null, lastWalletId: null });
       lsSet("block", null);
       resetTxHistory();
@@ -313,7 +315,7 @@ export const config = (newConfig?: Record<string, any>) => {
   return getConfig();
 };
 
-export const authStatus = (): string | Record<string, any> => {
+export const authStatus = (): "SignedIn" | "SignedOut" => {
   if (!_state.accountId) {
     return "SignedOut";
   }
@@ -336,11 +338,12 @@ export const getPublicKeyForContract = (opts?: any) => {
 // network, wallet, and explorer details as well as
 // sending account, contract, and selected public key
 export const selected = () => {
-  const network = getConfig().networkId;
-  const nodeUrl = getConfig().nodeUrl;
-  const walletUrl = getConfig().walletUrl;
-  const helperUrl = getConfig().helperUrl;
-  const explorerUrl = getConfig().explorerUrl;
+  const config = getConfig();
+  const network = config.networkId;
+  const nodeUrl = config.nodeUrl;
+  const walletUrl = config.walletUrl;
+  const helperUrl = config.helperUrl;
+  const explorerUrl = config.explorerUrl;
 
   const account = accountId();
   const contract = _state.accessKeyContractId;
@@ -361,7 +364,7 @@ export const selected = () => {
 export const requestSignIn = async (args?: { contractId?: string }) => {
   const contractId = args?.contractId;
   const privateKey = privateKeyFromRandom();
-  update({ accessKeyContractId: contractId, accountId: null, privateKey });
+  update({ accessKeyContractId: contractId, privateKey });
 
   const result = await _adapter.signIn({
     networkId: getConfig().networkId,
@@ -459,8 +462,9 @@ export const localTxHistory = () => {
   return getTxHistory();
 };
 
-export const signOut = () => {
-  update({ accountId: null, privateKey: null, contractId: null });
+export const signOut = async () => {
+  await _adapter.signOut();
+  update({ accountId: null, privateKey: null, accessKeyContractId: null, lastWalletId: null });
 };
 
 /**
@@ -819,6 +823,16 @@ export const actions = {
           );
         }
         finalArgs = JSON.parse(new TextDecoder().decode(decoded));
+
+
+        // try {
+        // // Idk if this is good idea or not
+        // const decoded = base64ToBytes(argsBase64);
+        // if (decoded === null) {
+        //   throw new Error(
+        //     "Failed to decode base64 string to Uint8Array."          );
+        // }
+        // finalArgs = decoded;
       } catch (e) {
         console.error("Failed to decode or parse argsBase64:", e);
         // Decide on fallback: throw error or use empty args

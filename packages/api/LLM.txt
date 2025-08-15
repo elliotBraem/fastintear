@@ -1,0 +1,944 @@
+# FastINTEAR - NEAR Protocol JavaScript SDK
+
+## Project Overview
+FastINTEAR is an experimental fork of the @fastnear/js-monorepo that provides a simplified JavaScript SDK for interacting with the NEAR Protocol blockchain. The project focuses on browser-first development with Node.js decoupling and exclusively uses the INTEAR Wallet for authentication and transaction signing.
+
+## Key Features
+- **Browser-First Design**: Surgically removed Node.js dependencies, replaced with modern browser APIs
+- **Global `near` Object**: Creates a global `near` object for easy access in browser environments
+- **INTEAR Wallet Integration**: Exclusively uses INTEAR Wallet for authentication and signing
+- **Static HTML Support**: Enables web3 projects with pure static HTML files
+- **TypeScript Support**: Full TypeScript support with proper type definitions
+- **Monorepo Structure**: Organized as a yarn workspace with multiple packages
+- **Dual Environment Support**: Works in both browser and Node.js with different signing strategies
+- **Real-time Event System**: Comprehensive event handling for account changes and transaction status
+- **Transaction History Tracking**: Persistent transaction history with status monitoring
+- **WebSocket Logout Detection**: Real-time logout notifications via bridge service
+
+## Project Structure
+
+### Root Level
+- `package.json` - Main workspace configuration
+- `tsconfig.base.json` - Base TypeScript configuration
+- `yarn.lock` / `bun.lock` - Package manager lock files
+- `README.md` - Project documentation
+- `examples/` - Example implementations (static and dynamic)
+- `packages/` - Core packages
+- `types/` - TypeScript type definitions
+
+### Core Packages
+
+#### packages/api (Main Package - "fastintear")
+The primary package that creates the global `near` object and provides the main API.
+
+**Key Files:**
+- `src/index.ts` - Main export file with global type declarations
+- `src/near.ts` - Core NEAR Protocol functionality and action helpers
+- `src/intear.ts` - INTEAR Wallet adapter implementation with WebSocket support
+- `src/state.ts` - State management, event system, and transaction history
+- `dist/` - Compiled output (ESM, CJS, UMD/IIFE)
+
+**Build Targets:**
+- ESM: `dist/esm/index.js`
+- CommonJS: `dist/cjs/index.cjs`
+- Browser Global: `dist/umd/browser.global.js` (IIFE format)
+
+#### packages/utils
+Utility functions for cryptography, encoding, transaction serialization, and NEAR Protocol operations.
+
+**Key Files:**
+- `src/crypto.ts` - Ed25519 cryptographic operations
+- `src/transaction.ts` - Transaction serialization and Borsh schema mapping
+- `src/misc.ts` - Unit conversion, encoding utilities, and helper functions
+- `src/storage.ts` - Cross-platform storage abstraction
+
+#### packages/repl
+REPL environment for testing and development.
+
+#### packages/borsh-schema
+Borsh serialization schema utilities for NEAR Protocol data structures.
+
+#### packages/wallet-adapter & packages/wallet-adapter-widget
+Wallet adapter components and widgets (legacy components, INTEAR adapter is built-in).
+
+## Environment-Specific Usage Patterns
+
+### Browser Environment
+In browsers, FastINTEAR uses a hybrid signing approach with intelligent decision-making:
+
+**Limited Access Key (LAK) Signing:**
+- Used for simple function calls with zero deposit
+- Automatically determined by `canSignWithLAK()` function
+- Signs transactions locally using stored private key
+- No wallet popup required for basic interactions
+- Requires `receiverId === contractId` from sign-in
+
+**Wallet Signing:**
+- Required for transactions with deposits (`hasNonZeroDeposit()`)
+- Required for non-function-call actions (transfers, staking, etc.)
+- Required when `receiverId !== contractId`
+- Opens INTEAR Wallet popup for user approval
+- Handles complex transaction scenarios
+
+**Decision Logic (Actual Implementation):**
+```javascript
+if (!privKey || receiverId !== _state.accessKeyContractId || !canSignWithLAK(actions) || hasNonZeroDeposit(actions)) {
+  // Use wallet signing (popup)
+  const result = await _adapter.sendTransactions({ transactions: [jsonTx] });
+} else {
+  // Use LAK signing (local) - serialize and sign directly
+  const signedTxBase64 = bytesToBase64(serializeSignedTransaction(plainTransactionObj, signatureBase58));
+  return await sendTxToRpc(signedTxBase64, waitUntil, txId);
+}
+```
+
+### Node.js Environment
+In Node.js, FastINTEAR supports multiple signing strategies:
+
+**Full Access Key (FAK) Signing:**
+- Direct transaction signing with full account access
+- No wallet dependency required
+- Suitable for server-side applications and automation
+- Can sign any transaction type including transfers and staking
+
+**Function Call Access Key (FCAK) Signing:**
+- Limited to specific contract method calls
+- Restricted by allowance and method permissions
+- Useful for service accounts with limited scope
+
+**Transaction Relaying:**
+- Sign transactions on behalf of users
+- Relay signed transactions to the network
+- Useful for meta-transaction patterns
+
+## Core API
+
+### Configuration
+```typescript
+import * as near from "fastintear";
+
+// Configure network
+near.config({ networkId: "mainnet" });
+
+// Get current configuration
+const config = near.config();
+console.log(config.nodeUrl, config.networkId);
+
+// Network switching clears state and resets transaction history
+near.config({ networkId: "testnet" }); // Triggers state reset
+```
+
+### Authentication
+
+#### Browser Authentication (Wallet-Based)
+```typescript
+// Sign in with INTEAR Wallet (opens popup)
+await near.requestSignIn({ contractId: "example.near" });
+
+// Check authentication status
+const status = near.authStatus(); // "SignedIn" | "SignedOut"
+
+// Get current account (with periodic session verification)
+const accountId = near.accountId();
+
+// Get current public key
+const publicKey = near.publicKey();
+
+// Get selected network and account details
+const selected = near.selected();
+
+// Sign out (clears local state and notifies wallet)
+await near.signOut();
+```
+
+#### Node.js Authentication (Key-Based)
+```typescript
+// Set up with existing private key
+near.update({ 
+  accountId: "your-account.near",
+  privateKey: "ed25519:your-private-key-here"
+});
+
+// Or generate new keypair
+import { privateKeyFromRandom } from "fastintear";
+const newKey = privateKeyFromRandom();
+```
+
+### Transaction Signing Strategies
+
+#### Simple Function Calls (LAK in Browser)
+```typescript
+// This will use LAK signing if conditions are met:
+// - receiverId matches contractId from sign-in
+// - Single FunctionCall action with zero deposit
+await near.sendTx({
+  receiverId: "contract.near", // Must match contractId from requestSignIn
+  actions: [
+    near.actions.functionCall({
+      methodName: "get_data",
+      args: { key: "value" },
+      gas: "30000000000000",
+      deposit: "0" // Zero deposit enables LAK signing
+    })
+  ]
+});
+```
+
+#### Complex Transactions (Wallet/FAK Required)
+```typescript
+// This requires wallet popup in browser or FAK in Node.js
+await near.sendTx({
+  receiverId: "contract.near",
+  actions: [
+    near.actions.functionCall({
+      methodName: "transfer",
+      args: { receiver_id: "alice.near", amount: "1000" },
+      gas: "30000000000000",
+      deposit: "1000000000000000000000000" // Non-zero deposit
+    })
+  ]
+});
+```
+
+### Message Signing
+```typescript
+// Sign arbitrary messages (requires wallet in browser)
+const signature = await near.signMessage({
+  message: "Hello, NEAR!",
+  recipient: "recipient.near",
+  nonce: new Uint8Array(32) // Optional custom nonce (defaults to random)
+});
+
+console.log(signature.accountId, signature.publicKey, signature.signature);
+```
+
+### Contract Interaction
+```typescript
+// View method calls (no signing required)
+const result = await near.view({
+  contractId: "contract.near",
+  methodName: "get_data",
+  args: { account_id: "user.near" },
+  blockId: "final" // Optional block specification
+});
+
+// Query account information
+const account = await near.queryAccount({
+  accountId: "user.near",
+  blockId: "optimistic"
+});
+
+// Query access key details
+const accessKey = await near.queryAccessKey({
+  accountId: "user.near",
+  publicKey: "ed25519:...",
+  blockId: "final"
+});
+
+// Query transaction status
+const txResult = await near.queryTx({
+  txHash: "transaction-hash",
+  accountId: "signer.near"
+});
+
+// Query block information
+const block = await near.queryBlock({ blockId: "final" });
+```
+
+### Transaction History and Events
+```typescript
+// Get local transaction history
+const history = near.localTxHistory();
+
+// Listen for account changes
+const unsubscribeAccount = near.event.onAccount((accountId) => {
+  console.log("Account changed:", accountId);
+});
+
+// Listen for transaction updates
+const unsubscribeTx = near.event.onTx((txStatus) => {
+  console.log(`Transaction ${txStatus.txId}: ${txStatus.status}`);
+  
+  switch (txStatus.status) {
+    case "Pending":
+      console.log("Transaction submitted to network");
+      break;
+    case "Included": 
+      console.log("Transaction included in block");
+      break;
+    case "Executed":
+      console.log("Transaction executed successfully");
+      console.log("Result:", txStatus.successValue);
+      break;
+    case "Error":
+    case "ErrorAfterIncluded":
+      console.error("Transaction failed:", txStatus.error);
+      break;
+    case "RejectedByUser":
+      console.log("User rejected transaction");
+      break;
+  }
+});
+
+// Unsubscribe from events
+near.event.offAccount(unsubscribeAccount);
+near.event.offTx(unsubscribeTx);
+```
+
+### Action Helpers
+```typescript
+// Function call action
+near.actions.functionCall({
+  methodName: "transfer",
+  args: { receiver_id: "alice.near", amount: "1000" },
+  gas: "30000000000000", // Optional, defaults to 30 TGas
+  deposit: "1" // Optional, defaults to "0"
+});
+
+// Function call with base64 args (alternative)
+near.actions.functionCall({
+  methodName: "method_name",
+  argsBase64: "base64-encoded-args",
+  gas: "30000000000000"
+});
+
+// Transfer action (always requires wallet/FAK)
+near.actions.transfer("1000000000000000000000000"); // 1 NEAR in yoctoNEAR
+
+// Stake action
+near.actions.stake({
+  amount: "1000000000000000000000000",
+  publicKey: "ed25519:..."
+});
+
+// Key management actions
+near.actions.addFullAccessKey({ publicKey: "ed25519:..." });
+near.actions.addLimitedAccessKey({
+  publicKey: "ed25519:...",
+  allowance: "1000000000000000000000000",
+  accountId: "contract.near",
+  methodNames: ["method1", "method2"]
+});
+near.actions.deleteKey({ publicKey: "ed25519:..." });
+
+// Account management
+near.actions.createAccount();
+near.actions.deleteAccount({ beneficiaryId: "beneficiary.near" });
+
+// Contract deployment
+near.actions.deployContract({ codeBase64: "base64-encoded-wasm" });
+```
+
+## INTEAR Wallet Integration
+
+### Wallet Adapter Features
+- **Popup-based Authentication**: Uses popup windows for secure authentication
+- **Real-time Logout Detection**: WebSocket connection for instant logout notifications
+- **Session Verification**: Automatic session validation with bridge service
+- **Signature Verification**: Cryptographic verification of all operations
+- **Cross-tab Synchronization**: Logout events propagate across browser tabs
+- **Automatic Reconnection**: WebSocket reconnection with exponential backoff
+
+### Authentication Flow
+1. User calls `near.requestSignIn({ contractId: "example.near" })`
+2. Popup opens to INTEAR Wallet (`https://wallet.intear.tech`)
+3. User authenticates in wallet
+4. Wallet returns account info and LAK keypair
+5. Session established with logout monitoring via WebSocket
+6. Bridge service monitors for remote logout events
+
+### Session Management
+```typescript
+// The adapter automatically handles session verification
+const adapter = new WalletAdapter({
+  walletUrl: "https://wallet.intear.tech",
+  logoutBridgeService: "https://logout-bridge-service.intear.tech",
+  onStateUpdate: (state) => {
+    // Handle state updates (login/logout)
+    console.log("Account changed:", state.accountId);
+  }
+});
+
+// Check current accounts (triggers session verification)
+const accounts = await adapter.getAccounts();
+```
+
+### WebSocket Logout Detection
+The system maintains a WebSocket connection to detect when users log out from the wallet:
+
+```typescript
+// Automatic WebSocket connection established after login
+// Authentication message format:
+const authMessage = {
+  Auth: {
+    network: "mainnet",
+    account_id: "user.near",
+    app_public_key: "ed25519:...",
+    nonce: Date.now(),
+    signature: "ed25519:signature..."
+  }
+};
+
+// Server responses:
+// { Success: { message: "Connected" } }
+// { Error: { message: "Authentication failed" } }
+// { LoggedOut: { network, account_id, app_public_key, logout_info } }
+
+// Logout verification process:
+// 1. Verify nonce is within 5-minute window
+// 2. Reconstruct message: `logout|${nonce}|${account_id}|${app_public_key}`
+// 3. Verify signature against user's logout public key
+// 4. Clear local storage and reload page if valid
+```
+
+## Technical Architecture
+
+### Transaction Decision Tree (Actual Implementation)
+```
+sendTx() Called
+├── Check Prerequisites
+│   ├── signerId exists? → No: throw "Must sign in"
+│   └── Yes: continue
+├── Generate Transaction ID (generateTxId())
+├── Decision Logic
+│   ├── !privKey OR receiverId !== accessKeyContractId OR !canSignWithLAK(actions) OR hasNonZeroDeposit(actions)
+│   │   ├── True: Wallet Signing Path
+│   │   │   ├── Create JSON transaction
+│   │   │   ├── Update transaction history (status: "Pending")
+│   │   │   ├── Call adapter.sendTransactions()
+│   │   │   └── Handle result (outcomes/rejection/error)
+│   │   └── False: LAK Signing Path
+│   │       ├── Get/increment nonce from localStorage
+│   │       ├── Get/cache recent block hash
+│   │       ├── Create PlainTransaction object
+│   │       ├── Serialize transaction with Borsh
+│   │       ├── Sign transaction hash with private key
+│   │       ├── Send to RPC with sendTxToRpc()
+│   │       └── Monitor with afterTxSent()
+└── Return result or throw error
+```
+
+### State Management
+- **Local Storage**: Persists authentication state, transaction history, nonce, and block cache
+- **In-Memory State**: Active session data, public keys, and adapter instances
+- **Transaction History**: Tracks pending, included, and executed transactions with timestamps
+- **Event System**: Notifies listeners of account and transaction changes
+- **Automatic Session Verification**: Periodic checks for remote logout (every 60 seconds)
+
+### Build System
+- **tsup**: TypeScript bundler with esbuild
+- **Multiple Targets**: ESM, CommonJS, IIFE
+- **Banner/Footer Injection**: Custom JavaScript injection for global object
+- **Type Generation**: Automatic TypeScript declaration files
+- **Global Object Hardening**: Uses `Object.defineProperty` with `configurable: false`
+
+### Security Features
+- **Ed25519 Signatures**: Cryptographic signing with Noble curves
+- **Nonce-based Authentication**: Prevents replay attacks in wallet communication
+- **Origin Validation**: Validates message origins in wallet communication
+- **Session Verification**: Regular session status checks via bridge service
+- **Signature Verification**: All wallet operations cryptographically verified
+- **WebSocket Authentication**: Signed authentication for real-time connections
+
+## Utility Functions
+
+### Unit Conversion
+```typescript
+import { convertUnit } from "fastintear";
+
+// Template literal syntax
+convertUnit`1 NEAR`; // "1000000000000000000000000"
+convertUnit`100 TGAS`; // "100000000000000"
+convertUnit`5.5 GGAS`; // "5500000000"
+
+// Function call syntax
+convertUnit("0.5 NEAR"); // "500000000000000000000000"
+convertUnit("1000 gas"); // "1000"
+
+// Available units: NEAR, TGAS, GGAS, gas, yoctonear
+// Also available as global: window.$$ = near.utils.convertUnit
+```
+
+### Cryptographic Operations
+```typescript
+import { 
+  privateKeyFromRandom, 
+  publicKeyFromPrivate, 
+  signHash,
+  sha256 
+} from "fastintear";
+
+// Generate new keypair
+const privateKey = privateKeyFromRandom();
+const publicKey = publicKeyFromPrivate(privateKey);
+
+// Sign data
+const data = new TextEncoder().encode("message");
+const hash = sha256(data);
+const signature = signHash(hash, privateKey, { returnBase58: true });
+```
+
+### Data Encoding
+```typescript
+import { 
+  toBase58, 
+  fromBase58, 
+  toBase64, 
+  fromBase64,
+  bytesToBase64,
+  base64ToBytes,
+  toHex,
+  fromHex
+} from "fastintear";
+
+// Base58 operations
+const encoded = toBase58(new Uint8Array([1, 2, 3]));
+const decoded = fromBase58(encoded);
+
+// Base64 operations  
+const b64 = toBase64("hello world");
+const text = fromBase64(b64);
+
+// Hex operations
+const hex = toHex(new Uint8Array([255, 0, 128]));
+const bytes = fromHex("ff0080");
+```
+
+### Transaction Utilities
+```typescript
+import { 
+  generateTxId,
+  canSignWithLAK,
+  hasNonZeroDeposit,
+  serializeTransaction,
+  serializeSignedTransaction
+} from "fastintear";
+
+// Generate mock transaction ID
+const txId = generateTxId(); // "tx-1642678901234-abc123"
+
+// Check if actions can use LAK signing
+const canUseLAK = canSignWithLAK([
+  { type: "FunctionCall", params: { methodName: "view", args: {}, gas: "30000000000000", deposit: "0" } }
+]); // true
+
+// Check if actions have non-zero deposits
+const hasDeposit = hasNonZeroDeposit([
+  { type: "Transfer", params: { deposit: "1000000000000000000000000" } }
+]); // true
+```
+
+## Development Workflow
+
+### Building
+```bash
+yarn build          # Build all packages
+yarn type-check     # Type checking
+yarn clean          # Clean build artifacts
+```
+
+### REPL
+```bash
+yarn repl          # Start interactive REPL with mock window object
+```
+
+### Package Management
+```bash
+yarn install-all   # Install dependencies for all packages
+yarn pack-all      # Pack all packages
+```
+
+## Network Configuration
+
+### Supported Networks
+- **Mainnet**: Production NEAR network
+- **Testnet**: NEAR testnet for development
+
+### Network Endpoints (Current Implementation)
+```typescript
+const NETWORKS = {
+  mainnet: {
+    networkId: "mainnet",
+    nodeUrl: "https://rpc.mainnet.fastnear.com/",
+  },
+  testnet: {
+    networkId: "testnet",
+    nodeUrl: "https://rpc.testnet.fastnear.com/",
+  }
+};
+
+// Extended configuration can include:
+near.config({
+  networkId: "mainnet",
+  nodeUrl: "https://rpc.mainnet.fastnear.com/",
+  walletUrl: "https://wallet.intear.tech",
+  helperUrl: "https://helper.mainnet.near.org",
+  explorerUrl: "https://nearblocks.io"
+});
+```
+
+## Error Handling
+
+### Error Types
+```typescript
+// Wallet-specific errors
+class IntearAdapterError extends Error {
+  constructor(message: string, public cause?: unknown) {
+    super(message);
+    this.name = "IntearAdapterError";
+  }
+}
+
+// Common error scenarios:
+// - "Must sign in" - No authenticated account
+// - "Popup was blocked" - Browser blocked wallet popup
+// - "Access key error" - Invalid or expired access key
+// - RPC errors from NEAR network
+// - Transaction failures with detailed error messages
+```
+
+### Error Recovery Patterns
+```typescript
+try {
+  await near.sendTx({ receiverId: "contract.near", actions: [...] });
+} catch (error) {
+  if (error instanceof IntearAdapterError) {
+    // Handle wallet-specific errors
+    console.error("Wallet error:", error.message);
+    if (error.message.includes("Popup was blocked")) {
+      // Prompt user to allow popups
+    }
+  } else if (error.message.includes("Must sign in")) {
+    // Redirect to sign-in flow
+    await near.requestSignIn({ contractId: "contract.near" });
+  } else {
+    // Handle network or other errors
+    console.error("Transaction failed:", error);
+  }
+}
+```
+
+### Transaction Status Monitoring
+```typescript
+// Comprehensive transaction status handling
+near.event.onTx((txStatus) => {
+  console.log(`Transaction ${txStatus.txId}: ${txStatus.status}`);
+  
+  switch (txStatus.status) {
+    case "Pending":
+      // Transaction created and submitted
+      showSpinner("Submitting transaction...");
+      break;
+    case "Included": 
+      // Transaction included in block, waiting for execution
+      showSpinner("Processing transaction...");
+      break;
+    case "Executed":
+      // Transaction executed successfully
+      hideSpinner();
+      console.log("Success! Result:", txStatus.successValue);
+      break;
+    case "Error":
+      // Transaction failed before inclusion
+      hideSpinner();
+      console.error("Transaction failed:", txStatus.error);
+      break;
+    case "ErrorAfterIncluded":
+      // Transaction included but execution failed
+      hideSpinner();
+      console.error("Execution failed:", txStatus.error);
+      break;
+    case "RejectedByUser":
+      // User rejected transaction in wallet
+      hideSpinner();
+      console.log("Transaction cancelled by user");
+      break;
+    case "PendingGotTxHash":
+      // Got transaction hash, waiting for inclusion
+      console.log("Transaction hash:", txStatus.txHash);
+      break;
+  }
+});
+```
+
+## Browser Compatibility
+- Modern browsers with ES2020+ support
+- WebSocket support for real-time features
+- Crypto API support for signatures
+- Local storage for persistence
+- Popup window support for wallet integration
+- TextEncoder/TextDecoder for string handling
+
+## Usage Examples
+
+### Static HTML Integration
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <title>FastINTEAR Example</title>
+</head>
+<body>
+  <button id="connect">Connect Wallet</button>
+  <button id="call" disabled>Call Contract</button>
+  <div id="status"></div>
+  
+  <script src="https://cdn.jsdelivr.net/npm/fastintear/dist/umd/browser.global.js"></script>
+  <script>
+    const status = document.getElementById('status');
+    
+    // Configure network
+    near.config({ networkId: "testnet" });
+    
+    // Listen for account changes
+    near.event.onAccount((accountId) => {
+      status.textContent = accountId ? `Connected: ${accountId}` : 'Disconnected';
+      document.getElementById('call').disabled = !accountId;
+    });
+    
+    // Listen for transaction updates
+    near.event.onTx((tx) => {
+      status.textContent = `Transaction ${tx.txId}: ${tx.status}`;
+    });
+    
+    document.getElementById('connect').onclick = async () => {
+      try {
+        await near.requestSignIn({ contractId: "guest-book.testnet" });
+      } catch (error) {
+        console.error("Connection failed:", error);
+        status.textContent = "Connection failed: " + error.message;
+      }
+    };
+    
+    document.getElementById('call').onclick = async () => {
+      try {
+        // This will use LAK signing (no popup) if conditions are met
+        await near.sendTx({
+          receiverId: "guest-book.testnet",
+          actions: [
+            near.actions.functionCall({
+              methodName: "addMessage",
+              args: { text: "Hello from FastINTEAR!" },
+              gas: "30000000000000",
+              deposit: "0"
+            })
+          ]
+        });
+      } catch (error) {
+        console.error("Transaction failed:", error);
+        status.textContent = "Transaction failed: " + error.message;
+      }
+    };
+    
+    // Check if already connected
+    if (near.accountId()) {
+      status.textContent = `Connected: ${near.accountId()}`;
+      document.getElementById('call').disabled = false;
+    }
+  </script>
+</body>
+</html>
+```
+
+### React Integration
+```typescript
+import * as near from "fastintear";
+import { useEffect, useState } from "react";
+
+function App() {
+  const [accountId, setAccountId] = useState<string | null>(null);
+  const [txStatus, setTxStatus] = useState<string>("");
+  
+  useEffect(() => {
+    near.config({ networkId: "mainnet" });
+    
+    // Listen for account changes
+    const unsubscribeAccount = near.event.onAccount((newAccountId) => {
+      setAccountId(newAccountId);
+    });
+    
+    // Listen for transaction updates
+    const unsubscribeTx = near.event.onTx((tx) => {
+      setTxStatus(`${tx.txId}: ${tx.status}`);
+    });
+    
+    // Check if already signed in
+    setAccountId(near.accountId());
+    
+    return () => {
+      unsubscribeAccount && near.event.offAccount(unsubscribeAccount);
+      unsubscribeTx && near.event.offTx(unsubscribeTx);
+    };
+  }, []);
+
+  const handleConnect = async () => {
+    try {
+      await near.requestSignIn({ contractId: "wrap.near" });
+    } catch (error) {
+      console.error("Connection failed:", error);
+    }
+  };
+  
+  const handleTransfer = async () => {
+    try {
+      // This will require wallet popup due to deposit
+      await near.sendTx({
+        receiverId: "alice.near",
+        actions: [
+          near.actions.transfer("1000000000000000000000000") // 1 NEAR
+        ]
+      });
+    } catch (error) {
+      console.error("Transfer failed:", error);
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await near.signOut();
+    } catch (error) {
+      console.error("Sign out failed:", error);
+    }
+  };
+
+  return (
+    <div>
+      {accountId ? (
+        <div>
+          <p>Connected: {accountId}</p>
+          <button onClick={handleTransfer}>Send 1 NEAR</button>
+          <button onClick={handleSignOut}>Sign Out</button>
+          {txStatus && <p>Transaction: {txStatus}</p>}
+        </div>
+      ) : (
+        <button onClick={handleConnect}>Connect Wallet</button>
+      )}
+    </div>
+  );
+}
+```
+
+### Node.js Server Integration
+```typescript
+import * as near from "fastintear";
+
+// Configure for server use
+near.config({ 
+  networkId: "mainnet",
+  nodeUrl: "https://rpc.mainnet.fastnear.com/"
+});
+
+// Set up with full access key
+near.update({
+  accountId: "server-account.near",
+  privateKey: process.env.NEAR_PRIVATE_KEY // Full access key
+});
+
+// Server can sign any transaction type
+async function processUserRequest(userId: string, amount: string) {
+  try {
+    const result = await near.sendTx({
+      receiverId: "token.near",
+      actions: [
+        near.actions.functionCall({
+          methodName: "ft_transfer",
+          args: { 
+            receiver_id: userId,
+            amount: amount
+          },
+          gas: "30000000000000",
+          deposit: "1" // Attach 1 yoctoNEAR
+        })
+      ]
+    });
+    
+    console.log("Transfer completed:", result);
+    return result;
+  } catch (error) {
+    console.error("Server transaction failed:", error);
+    throw error;
+  }
+}
+
+// Monitor transaction status
+near.event.onTx((tx) => {
+  console.log(`Server transaction ${tx.txId}: ${tx.status}`);
+  if (tx.status === "Executed") {
+    // Update database, send notifications, etc.
+  }
+});
+```
+
+## Dependencies
+
+### Core Dependencies
+- `@noble/curves`: Cryptographic curve operations (Ed25519)
+- `@noble/hashes`: Cryptographic hashing (SHA-256)
+- `borsh`: Binary serialization for NEAR Protocol
+- `big.js`: Arbitrary precision arithmetic for token amounts
+- `base58-js`: Base58 encoding/decoding
+- `js-base64`: Base64 encoding/decoding
+
+### Development Dependencies
+- `typescript`: TypeScript compiler
+- `tsup`: Build tool with esbuild
+- `rimraf`: File system utilities
+
+## Version Information
+- Current Version: 0.1.18 (fastintear package)
+- Monorepo Version: 0.9.7
+- License: MIT
+- Author: FastNEAR+Intear
+
+## Links
+- Homepage: https://js.fastnear.com
+- Repository: https://github.com/fastnear/js-monorepo
+- INTEAR Wallet: https://github.com/INTEARnear/wallet
+- Bridge Service: https://logout-bridge-service.intear.tech
+
+## Troubleshooting
+
+### Common Issues
+
+**"Must sign in" Error:**
+- Ensure `near.requestSignIn()` was called successfully
+- Check that `near.accountId()` returns a valid account ID
+- Verify network configuration matches wallet network
+
+**Transaction Fails with Wallet Popup:**
+- Check if popup was blocked by browser
+- Ensure transaction has proper gas and deposit amounts
+- Verify contract ID and method names are correct
+- Check browser console for detailed error messages
+
+**LAK Signing Not Working:**
+- Confirm transaction has zero deposit (`deposit: "0"`)
+- Ensure `receiverId` matches the `contractId` from sign-in
+- Check that action is a single function call
+- Verify `canSignWithLAK(actions)` returns true
+
+**WebSocket Connection Issues:**
+- Bridge service may be temporarily unavailable
+- Logout detection will fall back to periodic checks
+- Does not affect core transaction functionality
+- Check browser console for WebSocket error messages
+
+**Node.js Key Issues:**
+- Ensure private key format is correct: `ed25519:base58-key`
+- Verify account has sufficient balance for transactions
+- Check that key has appropriate permissions for action type
+- Use `near.queryAccessKey()` to verify key status
+
+**Transaction Status Not Updating:**
+- Check if event listeners are properly set up
+- Verify transaction ID is being tracked correctly
+- Check localStorage for transaction history
+- Network issues may delay status updates
+
+**Session Verification Failures:**
+- Clear localStorage and sign in again
+- Check network connectivity to bridge service
+- Verify wallet is still connected in other tabs
+- Try refreshing the page to reset session state
+
+This project represents a significant step toward making NEAR Protocol development more accessible through browser-first design and simplified APIs while maintaining security and functionality across both browser and Node.js environments.

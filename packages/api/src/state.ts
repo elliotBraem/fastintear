@@ -31,26 +31,34 @@ export interface NetworkConfig {
 }
 
 export interface AppState {
-  accountId?: string | null;
-  privateKey?: string | null;
-  lastWalletId?: string | null;
-  publicKey?: string | null;
-  accessKeyContractId?: string | null;
-
-  [key: string]: any;
+  accountId: string | null;
+  privateKey: string | null;
+  lastWalletId: string | null;
+  publicKey: string | null;
+  accessKeyContractId: string | null;
 }
+
+export type TxStatusType = 
+  | 'Pending' 
+  | 'Included' 
+  | 'Executed' 
+  | 'Error' 
+  | 'ErrorAfterIncluded' 
+  | 'RejectedByUser' 
+  | 'PendingGotTxHash';
 
 export interface TxStatus {
   txId: string;
   updateTimestamp?: number;
-  status?: 'Pending' | 'Included' | 'Executed' | 'Error' | 'ErrorAfterIncluded' | 'RejectedByUser' | 'PendingGotTxHash' | string;
+  status?: TxStatusType;
   tx?: any;
   txHash?: string;
   result?: any;
   error?: string | object;
   successValue?: any;
   finalState?: boolean;
-  [key: string]: any;
+  signature?: string;
+  signedTxBase64?: string;
 }
 
 export type TxHistory = Record<string, TxStatus>;
@@ -97,13 +105,15 @@ export let _state: AppState = lsGet("state") || {};
 
 // Triggered by the wallet adapter
 export const onAdapterStateUpdate = (state: WalletAdapterState) => {
-  console.log("Adapter state update:", state);
   const { accountId, lastWalletId, privateKey } = state;
-  update({
-    accountId: accountId || undefined,
-    lastWalletId: lastWalletId || undefined,
-    ...(privateKey ? { privateKey } : {}),
-  });
+  const newAccountId = accountId || null;
+  if (newAccountId !== _state.accountId) {
+    update({
+      accountId: newAccountId,
+      lastWalletId: lastWalletId || undefined,
+      ...(privateKey ? { privateKey } : {}),
+    });
+  }
 }
 
 export const getWalletAdapterState = (): WalletAdapterState => {
@@ -229,7 +239,7 @@ export const update = (newState: Partial<AppState>) => {
     lsSet("nonce", null);
   }
 
-  if (newState.accountId !== oldState.accountId) {
+  if (newState.hasOwnProperty("accountId") && newState.accountId !== oldState.accountId) {
     events.notifyAccountListeners(newState.accountId as string);
   }
 

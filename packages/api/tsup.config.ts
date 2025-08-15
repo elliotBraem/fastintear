@@ -31,15 +31,17 @@ export default defineConfig([
     splitting: false,
     clean: true,
     keepNames: true,
-    dts: {
-      resolve: true,
-      entry: 'src/index.ts',
-    },
+    dts: false,
     sourcemap: true,
     minify: false,
+    treeshake: true,
     banner: {
       js: `/* ⋈ 🏃🏻💨 FastNEAR API - CJS (${pkg.name} version ${pkg.version}) */\n` +
         `/* https://www.npmjs.com/package/${pkg.name}/v/${pkg.version} */`,
+    },
+    esbuildOptions(options) {
+      options.keepNames = true;
+      options.treeShaking = true;
     },
   },
 
@@ -59,9 +61,14 @@ export default defineConfig([
     },
     sourcemap: true,
     minify: false,
+    treeshake: true,
     banner: {
       js: `/* ⋈ 🏃🏻💨 FastNEAR API - ESM (${pkg.name} version ${pkg.version}) */\n` +
         `/* https://www.npmjs.com/package/${pkg.name}/v/${pkg.version} */`,
+    },
+    esbuildOptions(options) {
+      options.keepNames = true;
+      options.treeShaking = true;
     },
   },
 
@@ -81,12 +88,20 @@ export default defineConfig([
     sourcemap: true,
     minify: false,
     platform: 'browser',
+    treeshake: true,
     banner: {
       js: `/* ⋈ 🏃🏻💨 FastNEAR API - IIFE/UMD (${pkg.name} version ${pkg.version}) */\n` +
         `/* https://www.npmjs.com/package/${pkg.name}/v/${pkg.version} */`,
     },
     footer: {
       js: footerRedefiningGlobal,
-    }
+    },
+    esbuildOptions(options) {
+      options.keepNames = true;
+      options.treeShaking = true;
+      options.define = {
+        'process.env.NODE_ENV': '"production"'
+      };
+    },
   },
 ])

@@ -1,17 +1,19 @@
 {
   "name": "fastintear",
-  "version": "0.1.16",
+  "version": "0.2.0",
   "description": "Interact with FAST-INT-NEAR Protocol blockchain including transaction signing, utilities, and more.",
   "type": "module",
   "types": "./dist/esm/index.d.ts",
   "main": "./dist/cjs/index.cjs",
   "module": "./dist/esm/index.js",
   "browser": "./dist/umd/browser.global.js",
+  "sideEffects": false,
   "scripts": {
     "build": "tsup",
     "publish": "yarn npm publish",
     "clean": "yarn rimraf dist node_modules",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "dev": "tsup --watch"
   },
   "author": "FastNEAR+Intear",
   "homepage": "https://js.fastnear.com",
@@ -31,6 +33,8 @@
   ],
   "exports": {
     ".": {
+      "types": "./dist/esm/index.d.ts",
+      "browser": "./dist/umd/browser.global.js",
       "require": "./dist/cjs/index.cjs",
       "import": "./dist/esm/index.js"
     }
