@@ -88,20 +88,12 @@ export default defineConfig([
     sourcemap: true,
     minify: false,
     platform: 'browser',
-    treeshake: true,
     banner: {
       js: `/* ⋈ 🏃🏻💨 FastNEAR API - IIFE/UMD (${pkg.name} version ${pkg.version}) */\n` +
         `/* https://www.npmjs.com/package/${pkg.name}/v/${pkg.version} */`,
     },
     footer: {
       js: footerRedefiningGlobal,
-    },
-    esbuildOptions(options) {
-      options.keepNames = true;
-      options.treeShaking = true;
-      options.define = {
-        'process.env.NODE_ENV': '"production"'
-      };
     },
   },
 ])
