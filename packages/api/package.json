@@ -16,11 +16,14 @@
     "dev": "tsup --watch"
   },
   "author": "FastNEAR+Intear",
-  "homepage": "https://js.fastnear.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/fastnear/js-monorepo.git"
+    "url": "https://github.com/elliotBraem/fastintear.git"
   },
+  "bugs": {
+    "url": "https://github.com/elliotBraem/fastintear/issues"
+  },
+  "homepage": "https://github.com/elliotBraem/fastintear/tree/main/packages/api#readme",
   "keywords": [
     "near-protocol",
     "web3",
