@@ -131,8 +131,10 @@ near.config({ networkId: "testnet" }); // Triggers state reset
 ### Authentication
 
 #### Browser Authentication (Wallet-Based)
+
+**Basic Usage:**
 ```typescript
-// Sign in with INTEAR Wallet (opens popup)
+// Simple sign in with INTEAR Wallet (opens popup)
 await near.requestSignIn({ contractId: "example.near" });
 
 // Check authentication status
@@ -149,6 +151,142 @@ const selected = near.selected();
 
 // Sign out (clears local state and notifies wallet)
 await near.signOut();
+```
+
+**Enhanced Usage with Callbacks:**
+```typescript
+// Enhanced sign in with success and error callbacks
+await near.requestSignIn(
+  { contractId: "example.near" },
+  {
+    onSuccess: (result) => {
+      console.log("Successfully signed in:", result.accountId);
+      console.log("Public key:", result.publicKey);
+      console.log("Network:", result.networkId);
+      console.log("Is reconnection:", result.isReconnection);
+      // Handle successful authentication
+    },
+    onError: (error) => {
+      console.error("Sign-in failed:", error.message);
+      console.log("Error occurred at:", new Date(error.timestamp));
+      console.log("Original error:", error.originalError);
+      alert(`Sign-in error: ${error.message}`);
+    },
+    timeout: 120000 // 2 minutes timeout (default: 60000ms)
+  }
+);
+```
+
+**Promise-based Usage (Alternative):**
+```typescript
+// Using .then() and .catch() instead of callbacks
+near.requestSignIn({ contractId: "example.near" })
+  .then(result => {
+    console.log("Successfully signed in:", result.accountId);
+    console.log("Public key:", result.publicKey);
+  })
+  .catch(error => {
+    console.error("Sign-in failed:", error.message);
+    // Handle error appropriately
+  });
+```
+
+**Reconnection Detection:**
+```typescript
+// The enhanced requestSignIn automatically detects if user reconnects
+// with the same account and handles it gracefully
+await near.requestSignIn(
+  { contractId: "example.near" },
+  {
+    onSuccess: (result) => {
+      if (result.isReconnection) {
+        console.log("Welcome back!", result.accountId);
+      } else {
+        console.log("New connection established:", result.accountId);
+      }
+    }
+  }
+);
+```
+
+**Progress Tracking:**
+```typescript
+// Track sign-in progress with onPending callback
+await near.requestSignIn(
+  { contractId: "example.near" },
+  {
+    onPending: (context) => {
+      console.log(`Step: ${context.step}`);
+      console.log(`Network: ${context.networkId}`);
+      console.log(`Contract: ${context.contractId}`);
+      
+      switch (context.step) {
+        case 'popup_opening':
+          showStatus("Opening wallet popup...");
+          break;
+        case 'waiting_for_user':
+          showStatus("Please complete authentication in the popup");
+          break;
+        case 'processing_result':
+          showStatus("Processing authentication result...");
+          break;
+      }
+    },
+    onSuccess: (result) => {
+      hideStatus();
+      console.log("Authentication completed successfully");
+    },
+    onError: (error) => {
+      hideStatus();
+      console.error("Authentication failed:", error.message);
+    }
+  }
+);
+```
+
+**Type Definitions:**
+```typescript
+// Simplified requestSignIn type definitions
+export interface SignInParams {
+  contractId?: string;
+  methodNames?: string[];
+}
+
+export interface SignInError {
+  message: string;
+  originalError?: any;
+  timestamp: number;
+}
+
+export interface SignInCallbacks {
+  onSuccess?: (result: {
+    accountId: string;
+    publicKey: string;
+    networkId: string;
+    contractId?: string;
+    methodNames?: string[];
+    accounts: Account[];
+    isReconnection: boolean;
+  }) => void;
+  onError?: (error: SignInError) => void;
+  timeout?: number; // in milliseconds, default 60000
+}
+
+// Usage with full type safety
+const result = await near.requestSignIn(
+  { contractId: "example.near", methodNames: ["view", "call"] },
+  {
+    onSuccess: (result) => {
+      console.log("Signed in:", result.accountId);
+      console.log("Is reconnection:", result.isReconnection);
+    },
+    onError: (error) => {
+      console.error("Sign-in failed:", error.message);
+      console.log("Timestamp:", error.timestamp);
+    },
+    timeout: 120000
+  }
+);
 ```
 
 #### Node.js Authentication (Key-Based)

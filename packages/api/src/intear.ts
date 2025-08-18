@@ -496,6 +496,38 @@ async function verifySessionStatus(
   }
 }
 
+export type SignInStep = 'popup_opening' | 'waiting_for_user' | 'processing_result';
+
+export type SignInErrorType =
+  | 'popup_blocked'
+  | 'user_cancelled'
+  | 'wallet_error'
+  | 'network_error'
+  | 'timeout'
+  | 'unknown';
+
+export type SuggestedAction =
+  | 'retry'
+  | 'check_popup_blocker'
+  | 'try_different_browser'
+  | 'contact_support'
+  | 'check_network';
+
+export type SignInError = {
+  type: SignInErrorType;
+  message: string;
+  retryable: boolean;
+  suggestedAction: SuggestedAction;
+  originalError?: any;
+  timestamp: number;
+}
+
+export interface SignInCallbacks {
+  onPending?: (context: { step: SignInStep; networkId: string; contractId?: string }) => void;
+  onError?: (error: SignInError) => void;
+  timeout?: number;
+}
+
 export class WalletAdapter {
   #walletUrl: string;
   #logoutBridgeService: string;
@@ -520,14 +552,60 @@ export class WalletAdapter {
     }
   }
 
-  async signIn({ contractId, methodNames, networkId }: { contractId?: string; methodNames?: string[]; networkId: string; }): Promise<{ accountId: string, accounts: Account[], privateKey?: string, publicKey?: string, error?: string }> {
+  async signIn({
+    contractId,
+    methodNames,
+    networkId,
+    callbacks
+  }: {
+    contractId?: string;
+    methodNames?: string[];
+    networkId: string;
+    callbacks?: SignInCallbacks;
+  }): Promise<{ accountId: string, accounts: Account[], privateKey?: string, publicKey?: string, error?: string }> {
     console.debug("WalletAdapter: signIn", { contractId, methodNames, networkId });
+    const { onPending, onError, timeout = 60000 } = callbacks || {};
     const privateKey = privateKeyFromRandom();
 
+    let timeoutId: NodeJS.Timeout | null = null;
+
     return new Promise((resolve, reject) => {
+      // Step 1: Opening popup
+      onPending?.({ step: 'popup_opening', networkId, contractId });
+
       const popup = window.open(`${this.#walletUrl}/connect`, "_blank", POPUP_FEATURES);
       if (!popup) {
+        const error = {
+          type: 'popup_blocked' as SignInErrorType,
+          message: 'Popup was blocked by browser',
+          retryable: true,
+          suggestedAction: 'check_popup_blocker' as SuggestedAction,
+          timestamp: Date.now(),
+        };
+        onError?.(error);
         return reject(new IntearAdapterError("Popup was blocked"));
+      }
+
+      // Step 2: Waiting for user
+      onPending?.({ step: 'waiting_for_user', networkId, contractId });
+
+      // Set up timeout
+      if (timeout > 0) {
+        timeoutId = setTimeout(() => {
+          popup.close();
+          window.removeEventListener("message", listener);
+          clearInterval(checkPopupClosed);
+
+          const error = {
+            type: 'timeout' as SignInErrorType,
+            message: 'Sign-in timed out',
+            retryable: true,
+            suggestedAction: 'retry' as SuggestedAction,
+            timestamp: Date.now(),
+          };
+          onError?.(error);
+          reject(new IntearAdapterError("Sign-in timeout"));
+        }, timeout);
       }
 
       let done = false;
@@ -565,12 +643,24 @@ export class WalletAdapter {
             break;
           }
           case "connected": {
+            // Step 3: Processing result
+            onPending?.({ step: 'processing_result', networkId, contractId });
+
             done = true;
             popup.close();
             window.removeEventListener("message", listener);
+            if (timeoutId) clearTimeout(timeoutId);
 
             const accounts = event.data.accounts as Account[];
             if (!accounts || accounts.length === 0) {
+              const error = {
+                type: 'wallet_error' as SignInErrorType,
+                message: 'No accounts returned from wallet',
+                retryable: true,
+                suggestedAction: 'retry' as SuggestedAction,
+                timestamp: Date.now(),
+              };
+              onError?.(error);
               return reject(new IntearAdapterError("No accounts returned from wallet"));
             }
             const functionCallKeyAdded = event.data.functionCallKeyAdded;
@@ -618,7 +708,19 @@ export class WalletAdapter {
             done = true;
             popup.close();
             window.removeEventListener("message", listener);
-            reject(new IntearAdapterError(event.data.message || "Unknown error from wallet popup"));
+            if (timeoutId) clearTimeout(timeoutId);
+
+            const errorMessage = event.data.message || "Unknown error from wallet popup";
+            const error = {
+              type: 'wallet_error' as SignInErrorType,
+              message: errorMessage,
+              retryable: true,
+              suggestedAction: 'contact_support' as SuggestedAction,
+              originalError: event.data,
+              timestamp: Date.now(),
+            };
+            onError?.(error);
+            reject(new IntearAdapterError(errorMessage));
             break;
           }
         }
@@ -629,7 +731,17 @@ export class WalletAdapter {
         if (popup.closed) {
           window.removeEventListener("message", listener);
           clearInterval(checkPopupClosed);
+          if (timeoutId) clearTimeout(timeoutId);
+
           if (!done) {
+            const error = {
+              type: 'user_cancelled' as SignInErrorType,
+              message: 'Sign-in canceled - popup closed by user',
+              retryable: true,
+              suggestedAction: 'retry' as SuggestedAction,
+              timestamp: Date.now(),
+            };
+            onError?.(error);
             reject(new IntearAdapterError("Sign-in canceled - popup closed by user"));
           }
         }

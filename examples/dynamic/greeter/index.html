@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NEAR Greeter Example (testnet)</title>
+  <title>NEAR Greeter Example with SignIn Callbacks (testnet)</title>
   <script src="../../../packages/api/dist/umd/browser.global.js"></script>
   <style>
     .container {
-      max-width: 600px;
+      max-width: 800px;
       margin: 50px auto;
       padding: 20px;
       font-family: Arial, sans-serif;
@@ -20,22 +20,56 @@
       margin: 20px 0;
       padding: 10px;
       background-color: #f0f0f0;
+      border-radius: 4px;
+    }
+    #callback-log {
+      margin: 20px 0;
+      padding: 15px;
+      background-color: #1e1e1e;
+      color: #00ff00;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      max-height: 300px;
+      overflow-y: auto;
+      white-space: pre-wrap;
     }
     pre {
       margin: 20px 0;
       padding: 10px;
       background-color: #f0f0f0;
+      border-radius: 4px;
+    }
+    .pending {
+      color: #ff9500;
+    }
+    .success {
+      color: #00aa00;
+    }
+    .error {
+      color: #ff0000;
+    }
+    .step {
+      font-weight: bold;
+      color: #0066cc;
     }
   </style>
 </head>
 <body>
 <div class="container">
-  <h1>NEAR Greeter Example</h1>
+  <h1>NEAR Greeter Example with SignIn Callbacks</h1>
   <div id="status">Not connected</div>
 
   <div id="auth-section">
-    <button onclick="signIn()">Sign In</button>
+    <button onclick="signInWithCallbacks()">Sign In (with callbacks)</button>
+    <button onclick="signInBasic()">Sign In (basic)</button>
     <button onclick="signOut()">Sign Out</button>
+  </div>
+
+  <div id="callback-section">
+    <h2>Callback Log:</h2>
+    <div id="callback-log">Ready to log callbacks...\n</div>
+    <button onclick="clearLog()">Clear Log</button>
   </div>
 
   <div id="contract-section">
@@ -51,18 +85,33 @@
   // Initialize NEAR
   near.config({ networkId: 'mainnet' });
 
-  let currentAccount = near.accountId();
+  // Callback logging function
+  function logCallback(type, message, data = null) {
+    const timestamp = new Date().toLocaleTimeString();
+    const logElement = document.getElementById('callback-log');
+    const logEntry = `[${timestamp}] ${type.toUpperCase()}: ${message}${data ? '\n  Data: ' + JSON.stringify(data, null, 2) : ''}\n\n`;
+    logElement.textContent += logEntry;
+    logElement.scrollTop = logElement.scrollHeight;
+    
+    // Also log to browser console
+    console.log(`SignIn Callback - ${type}:`, message, data);
+  }
+
+  function clearLog() {
+    document.getElementById('callback-log').textContent = 'Log cleared...\n';
+  }
 
   // Setup account handling
   near.event.onAccount((accountId) => {
     console.log("Account ID Update", accountId);
-    currentAccount = accountId;
+    logCallback('account', `Account changed to: ${accountId || 'null'}`);
     updateUI();
   });
 
   // Setup transaction handling
   near.event.onTx((txStatus) => {
     console.log("Transaction Status Update", txStatus);
+    logCallback('transaction', `Status: ${txStatus.status}`, { txHash: txStatus.txHash, status: txStatus.status });
     fetchGreeting(); // Refresh greeting after successful transaction
     updateStatus(`Transaction ${txStatus.status}: ${txStatus.txHash || ''}`);
   });
@@ -71,8 +120,8 @@
   function updateUI() {
     const status = document.getElementById('status');
     fetchGreeting();
-    if (currentAccount) {
-      status.textContent = `Connected as: ${currentAccount}`;
+    if (near.accountId()) {
+      status.textContent = `Connected as: ${near.accountId()}`;
     } else {
       status.textContent = 'Not connected';
       document.getElementById('current-greeting').textContent = '-';
@@ -100,7 +149,7 @@
 
   // Set new greeting
   async function setGreeting() {
-    if (!currentAccount) {
+    if (!near.accountId()) {
       updateStatus('Please sign in first');
       return;
     }
@@ -117,7 +166,7 @@
         actions: [
           near.actions.functionCall({
             methodName: "set_greeting",
-            args: { greeting: newGreeting + ' from @' + currentAccount },
+            args: { greeting: newGreeting + ' from @' + near.accountId() },
             gas: "30000000000000", // 30 TGas
             deposit: "0"
           })
@@ -130,24 +179,83 @@
     }
   }
 
-  // Sign in function
-  function signIn() {
-      near.requestSignIn({ contractId })
-        .catch(e => {
-          console.error('Sign-in error:', e.message);
-          updateStatus(`Sign-in failed: ${e.message}`);
-        });
+  // Sign in function with comprehensive callbacks
+  function signInWithCallbacks() {
+    logCallback('info', 'Starting sign-in with callbacks...');
+    updateStatus('Starting sign-in...');
+    
+    near.requestSignIn(
+      { contractId },
+      {
+        onSuccess: (result) => {
+          logCallback('success', 'Sign-in successful!', result);
+          updateStatus(`Successfully signed in as ${result.accountId}`);
+        },
+        
+        onError: (error) => {
+          logCallback('error', `Sign-in failed: ${error.message}`, error);
+          updateStatus(`Sign-in failed: ${error.message}`);
+          
+          // Provide user-friendly suggestions based on error type
+          switch(error.type) {
+            case 'popup_blocked':
+              alert('Popup was blocked! Please allow popups for this site and try again.');
+              break;
+            case 'user_cancelled':
+              // User cancelled, no need to show error
+              break;
+            case 'timeout':
+              alert('Sign-in timed out. Please try again.');
+              break;
+            case 'network_error':
+              alert('Network error occurred. Please check your connection and try again.');
+              break;
+            default:
+              alert(`Sign-in error: ${error.message}`);
+          }
+        },
+        
+        timeout: 120000 // 2 minutes timeout
+      }
+    ).catch(e => {
+      logCallback('error', `Uncaught sign-in error: ${e.message}`, e);
+      console.error('Uncaught sign-in error:', e);
+    });
+  }
+
+  // Basic sign in function (for comparison)
+  function signInBasic() {
+    logCallback('info', 'Starting basic sign-in (no callbacks)...');
+    
+    near.requestSignIn({ contractId })
+      .then(result => {
+        updateStatus(`Successfully signed in as ${result.accountId}`);
+        logCallback('info', 'Basic sign-in completed', result);
+      })
+      .catch(e => {
+        logCallback('error', `Basic sign-in error: ${e.message}`, e);
+        console.error('Basic sign-in error:', e.message);
+        updateStatus(`Sign-in failed: ${e.message}`);
+      });
   }
 
   // Sign out function
   function signOut() {
+    logCallback('info', 'Signing out...');
     near.signOut();
-    currentAccount = null;
     updateUI();
+    updateStatus('Signed out');
   }
 
   // Initial UI update
   updateUI();
+  
+  // Log initial state
+  logCallback('info', 'Page loaded', { 
+    currentAccount: near.accountId(), 
+    networkId: near.config().networkId,
+    contractId 
+  });
 </script>
 </body>
 </html>

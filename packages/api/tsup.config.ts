@@ -55,6 +55,9 @@ export default defineConfig([
     splitting: false,
     clean: true,
     keepNames: true,
+    outExtension: ({ format }) => ({
+      js: '.js',
+    }),
     dts: {
       resolve: true,
       entry: 'src/index.ts',

@@ -21,9 +21,7 @@
 ### Install & Import
 
 ```bash
-npm install fastintear
-# or
-yarn add fastintear
+bun add fastintear
 ```
 
 ### Import
@@ -44,8 +42,21 @@ import {
 // Configure network
 near.config({ networkId: "mainnet" });
 
-// Sign in with contract for LAK signing
+// Sign in with contract for LAK signing (Promise-based)
 await near.requestSignIn({ contractId: "your-contract.near" });
+
+// Sign in with callbacks for real-time updates
+near.requestSignIn(
+  { contractId: "your-contract.near" },
+  {
+    onSuccess: (result) => {
+      console.log('Signed in successfully:', result.accountId);
+    },
+    onError: (error) => {
+      console.error('Sign-in failed:', error.message);
+    }
+  }
+);
 
 // Send transaction (uses LAK if conditions met, wallet popup otherwise)
 await near.sendTx({
@@ -87,8 +98,8 @@ So it *is* possible to have a web3 library that's decoupled from Node.js
 
 Some emergent behavior comes as a result of this.
 
-  - ability to run code in browser's dev console
-  - ability to create web3 projects entirely with static html
+- ability to run code in browser's dev console
+- ability to create web3 projects entirely with static html
 
 ### `near` global
 

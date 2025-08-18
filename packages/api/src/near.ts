@@ -12,19 +12,17 @@ import {
   signHash,
   toBase58,
   toBase64,
-  tryParseJson,
-  base64ToBytes
+  tryParseJson
 } from "@fastnear/utils";
 import Big from "big.js";
 
 import {
   _adapter,
   _state,
-  DEFAULT_NETWORK_ID,
   getTxHistory,
   NETWORKS,
   update,
-  updateTxHistory,
+  updateTxHistory
 } from "./state.js";
 
 // action types
@@ -135,6 +133,7 @@ import * as reExportAllUtils from "@fastnear/utils";
 import { sha256 } from "@noble/hashes/sha2";
 import * as stateExports from "./state.js";
 import { type EventsType } from "./state.js";
+import type { SignInError } from "./intear.js";
 
 Big.DP = 27;
 export const MaxBlockDelayMs = 1000 * 60 * 60 * 6; // 6 hours
@@ -281,11 +280,11 @@ const ACCOUNT_CHECK_INTERVAL = 60000; // 1 minute
 
 export const accountId = (): string | null => {
   const currentTime = Date.now();
-  
+
   // only trigger check if enough time has passed since last check
   if (_state.accountId && currentTime - lastAccountCheckTime > ACCOUNT_CHECK_INTERVAL) {
     lastAccountCheckTime = currentTime;
-    
+
     _adapter.getAccounts().then(accounts => {
       if (accounts.length === 0 && _state.accountId) {
         // update state if logged out (will be realized in next near.accountId() call)
@@ -295,7 +294,7 @@ export const accountId = (): string | null => {
       console.error("Error checking account status:", e);
     });
   }
-  
+
   return _state.accountId;
 };
 
@@ -361,31 +360,118 @@ export const selected = () => {
   }
 }
 
-export const requestSignIn = async (args?: { contractId?: string }) => {
-  const contractId = args?.contractId;
+export interface SignInParams {
+  contractId?: string;
+  methodNames?: string[];
+}
+
+export interface SignInCallbacks {
+  onSuccess?: (result: {
+    accountId: string;
+    publicKey: string;
+    networkId: string;
+    contractId?: string;
+    methodNames?: string[];
+    accounts: Account[];
+    isReconnection: boolean;
+  }) => void;
+  onError?: (error: SignInError) => void;
+  timeout?: number; // in milliseconds, default 60000
+}
+
+export const requestSignIn = async (
+  params: SignInParams = {},
+  callbacks: SignInCallbacks = {}
+) => {
+  const { contractId, methodNames } = params;
+  const { onSuccess, onError, timeout = 60000 } = callbacks;
+  const networkId = getConfig().networkId;
+
+  // Check if this is a reconnection
+  const previousAccountId = lsGet('lastSignedInAccount') as string | null;
+  const isReconnection = !!previousAccountId && previousAccountId !== _state.accountId;
+
   const privateKey = privateKeyFromRandom();
   update({ accessKeyContractId: contractId, privateKey });
 
-  const result = await _adapter.signIn({
-    networkId: getConfig().networkId,
-    contractId,
-  });
-
-  if (result.error) {
-    throw new Error(`Wallet error: ${result.error}`);
-  }
-  // If signIn succeeded, update state with result 
-  if (result.accountId) {
-    update({ 
-      accountId: result.accountId, 
-      privateKey: result.privateKey, // Return the publicKey and privateKey from intear adapter
-      publicKey: result.publicKey,   
-      accessKeyContractId: contractId 
+  try {
+    const result = await _adapter.signIn({
+      networkId,
+      contractId,
+      methodNames,
+      callbacks: {
+        onError: onError ? (error) => {
+          onError(error);
+        } : undefined,
+        timeout,
+      },
     });
-  } else {
-    // This case might indicate an issue if signIn resolves without accountId or error
-    console.warn("@fastnear: signIn resolved without accountId or error.");
-    update({ accountId: null, privateKey: null, publicKey: null, accessKeyContractId: null }); // Ensure signed out state
+
+    if (result.error) {
+      const error: SignInError = {
+        type: 'wallet_error',
+        message: result.error,
+        retryable: true,
+        suggestedAction: 'contact_support',
+        originalError: result.error,
+        timestamp: Date.now(),
+      };
+
+      onError?.(error);
+      throw new Error(`Wallet error: ${result.error}`);
+    }
+
+    if (result.accountId) {
+      // Store for reconnection detection
+      lsSet('lastSignedInAccount', result.accountId);
+      
+      update({
+        accountId: result.accountId,
+        privateKey: result.privateKey,
+        publicKey: result.publicKey,
+        accessKeyContractId: contractId
+      });
+
+      const successResult = {
+        accountId: result.accountId,
+        publicKey: result.publicKey!,
+        networkId,
+        contractId,
+        methodNames,
+        accounts: result.accounts || [{ accountId: result.accountId, publicKey: result.publicKey }],
+        isReconnection,
+      };
+
+      onSuccess?.(successResult);
+      return successResult;
+    } else {
+      console.warn("@fastnear: signIn resolved without accountId or error.");
+      update({ accountId: null, privateKey: null, publicKey: null, accessKeyContractId: null });
+
+      const error: SignInError = {
+        type: 'unknown',
+        message: 'Sign-in completed but no account information was returned',
+        retryable: true,
+        suggestedAction: 'retry',
+        originalError: null,
+        timestamp: Date.now(),
+      };
+
+      onError?.(error);
+      throw new Error('Sign-in completed but no account information was returned');
+    }
+  } catch (err) {
+    const error: SignInError = {
+      type: 'unknown',
+      message: err instanceof Error ? err.message : 'Unknown error occurred',
+      retryable: true,
+      suggestedAction: 'contact_support',
+      originalError: err,
+      timestamp: Date.now(),
+    };
+
+    onError?.(error);
+    throw err;
   }
 };
 
@@ -581,17 +667,17 @@ export const sendTx = async ({
       });
 
       // Resolves with outcomes or rejection
-    if (result.outcomes?.length) {
-      result.outcomes.forEach((r) => {
-        const transactionEntry = r.get("transaction");
-        updateTxHistory({
-          txId,
-          status: "Executed",
-          result: r,
-          txHash: transactionEntry?.hash,
-          finalState: true,
+      if (result.outcomes?.length) {
+        result.outcomes.forEach((r) => {
+          const transactionEntry = r.get("transaction");
+          updateTxHistory({
+            txId,
+            status: "Executed",
+            result: r,
+            txHash: transactionEntry?.hash,
+            finalState: true,
+          });
         });
-      });
       } else if (result.rejected) {
         updateTxHistory({ txId, status: "RejectedByUser", finalState: true });
       } else if (result.error) {

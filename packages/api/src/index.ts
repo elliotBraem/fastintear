@@ -1,5 +1,5 @@
 // See tsup.config.ts for additional banner/footer js
-export * from "./near.js";
+export * from "./near";
 export type { NetworkConfig, TxStatus, TxStatusType } from "./state";
 
 declare global {
