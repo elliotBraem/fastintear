@@ -5,26 +5,65 @@
 
 ## Installation & Integration
 
-### Script Tag (IIFE) - Static HTML
-
-```html
-<script src="https://cdn.jsdelivr.net/npm/fastintear/dist/umd/browser.global.js"></script>
-<script>
-  // Global `near` object is now available
-  near.config({ networkId: "mainnet" });
-  
-  // Also available: window.$$ = near.utils.convertUnit
-  const amount = $$`1 NEAR`; // "1000000000000000000000000"
-</script>
-```
-
-### Install & Import
+### Install
 
 ```bash
 bun add fastintear
 ```
 
-### Import
+### Preferred: Client-Based Usage (createNearClient)
+
+```typescript
+import { createNearClient } from "fastintear";
+
+// Create isolated NEAR client instance
+const nearClient = createNearClient({ networkId: "mainnet" });
+
+// Sign in with contract for LAK signing (Promise-based)
+await nearClient.requestSignIn({ contractId: "your-contract.near" });
+
+// Sign in with callbacks for real-time updates
+nearClient.requestSignIn(
+  { contractId: "your-contract.near" },
+  {
+    onSuccess: (result) => {
+      console.log('Signed in successfully:', result.accountId);
+    },
+    onError: (error) => {
+      console.error('Sign-in failed:', error.message);
+    }
+  }
+);
+
+// Send transaction (uses LAK if conditions met, wallet popup otherwise)
+await nearClient.sendTx({
+  receiverId: "your-contract.near",
+  actions: [
+    nearClient.actions.functionCall({
+      methodName: "your_method",
+      args: { key: "value" },
+      gas: "30000000000000",
+      deposit: "0"
+    })
+  ]
+});
+
+// Listen for transaction updates
+nearClient.event.onTx((txStatus) => {
+  console.log(`Transaction ${txStatus.txId}: ${txStatus.status}`);
+});
+
+// Sign out
+await nearClient.signOut();
+```
+
+**Benefits of createNearClient:**
+- **Isolated State**: Each client maintains its own authentication and transaction state
+- **Multiple Clients**: Support multiple NEAR connections in one application
+- **Cleaner Architecture**: Better separation of concerns and testability
+- **Same API**: Compatible with existing `near.*` methods
+
+### Alternative: Global Import
 
 ```typescript
 import * as near from "fastintear";
@@ -44,19 +83,6 @@ near.config({ networkId: "mainnet" });
 
 // Sign in with contract for LAK signing (Promise-based)
 await near.requestSignIn({ contractId: "your-contract.near" });
-
-// Sign in with callbacks for real-time updates
-near.requestSignIn(
-  { contractId: "your-contract.near" },
-  {
-    onSuccess: (result) => {
-      console.log('Signed in successfully:', result.accountId);
-    },
-    onError: (error) => {
-      console.error('Sign-in failed:', error.message);
-    }
-  }
-);
 
 // Send transaction (uses LAK if conditions met, wallet popup otherwise)
 await near.sendTx({
@@ -78,6 +104,19 @@ near.event.onTx((txStatus: TxStatus) => {
 
 // Sign out
 await near.signOut();
+```
+
+### Alternative: Script Tag (IIFE) - Static HTML
+
+```html
+<script src="https://cdn.jsdelivr.net/npm/fastintear/dist/umd/browser.global.js"></script>
+<script>
+  // Global `near` object is now available
+  near.config({ networkId: "mainnet" });
+  
+  // Also available: window.$$ = near.utils.convertUnit
+  const amount = $$`1 NEAR`; // "1000000000000000000000000"
+</script>
 ```
 
 ## General

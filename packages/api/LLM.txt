@@ -113,11 +113,66 @@ In Node.js, FastINTEAR supports multiple signing strategies:
 
 ## Core API
 
-### Configuration
+### Client Creation (Preferred)
+
+**createNearClient Function:**
+```typescript
+import { createNearClient } from "fastintear";
+
+// Create isolated NEAR client instance
+const nearClient = createNearClient({ networkId: "mainnet" });
+
+// Multiple clients with different configurations
+const mainnetClient = createNearClient({ networkId: "mainnet" });
+const testnetClient = createNearClient({ networkId: "testnet" });
+
+// Custom configuration
+const customClient = createNearClient({
+  networkId: "mainnet",
+  nodeUrl: "https://custom-rpc.example.com/",
+  walletUrl: "https://wallet.intear.tech"
+});
+```
+
+**Client Configuration:**
+```typescript
+// Configure network for specific client
+nearClient.config({ networkId: "mainnet" });
+
+// Get current configuration
+const config = nearClient.config();
+console.log(config.nodeUrl, config.networkId);
+
+// Network switching clears state and resets transaction history
+nearClient.config({ networkId: "testnet" }); // Triggers state reset for this client only
+```
+
+**Client State Management:**
+```typescript
+// Each client maintains isolated state
+const client1 = createNearClient({ networkId: "mainnet" });
+const client2 = createNearClient({ networkId: "testnet" });
+
+// Sign in to different accounts on different networks
+await client1.requestSignIn({ contractId: "mainnet-contract.near" });
+await client2.requestSignIn({ contractId: "testnet-contract.near" });
+
+// Independent authentication status
+console.log(client1.accountId()); // "user.near"
+console.log(client2.accountId()); // "testuser.testnet"
+console.log(client1.authStatus()); // "SignedIn"
+console.log(client2.authStatus()); // "SignedIn"
+
+// Independent transaction histories
+const mainnetHistory = client1.localTxHistory();
+const testnetHistory = client2.localTxHistory();
+```
+
+### Global Configuration (Alternative)
 ```typescript
 import * as near from "fastintear";
 
-// Configure network
+// Configure network globally
 near.config({ networkId: "mainnet" });
 
 // Get current configuration
@@ -125,15 +180,42 @@ const config = near.config();
 console.log(config.nodeUrl, config.networkId);
 
 // Network switching clears state and resets transaction history
-near.config({ networkId: "testnet" }); // Triggers state reset
+near.config({ networkId: "testnet" }); // Triggers global state reset
 ```
 
 ### Authentication
 
 #### Browser Authentication (Wallet-Based)
 
-**Basic Usage:**
+**Client-Based Usage (Preferred):**
 ```typescript
+import { createNearClient } from "fastintear";
+
+const nearClient = createNearClient({ networkId: "mainnet" });
+
+// Simple sign in with INTEAR Wallet (opens popup)
+await nearClient.requestSignIn({ contractId: "example.near" });
+
+// Check authentication status
+const status = nearClient.authStatus(); // "SignedIn" | "SignedOut"
+
+// Get current account (with periodic session verification)
+const accountId = nearClient.accountId();
+
+// Get current public key
+const publicKey = nearClient.publicKey();
+
+// Get selected network and account details
+const selected = nearClient.selected();
+
+// Sign out (clears local state and notifies wallet)
+await nearClient.signOut();
+```
+
+**Global Usage (Alternative):**
+```typescript
+import * as near from "fastintear";
+
 // Simple sign in with INTEAR Wallet (opens popup)
 await near.requestSignIn({ contractId: "example.near" });
 
@@ -153,8 +235,36 @@ const selected = near.selected();
 await near.signOut();
 ```
 
-**Enhanced Usage with Callbacks:**
+**Enhanced Usage with Callbacks (Client-Based):**
 ```typescript
+const nearClient = createNearClient({ networkId: "mainnet" });
+
+// Enhanced sign in with success and error callbacks
+await nearClient.requestSignIn(
+  { contractId: "example.near" },
+  {
+    onSuccess: (result) => {
+      console.log("Successfully signed in:", result.accountId);
+      console.log("Public key:", result.publicKey);
+      console.log("Network:", result.networkId);
+      console.log("Is reconnection:", result.isReconnection);
+      // Handle successful authentication
+    },
+    onError: (error) => {
+      console.error("Sign-in failed:", error.message);
+      console.log("Error occurred at:", new Date(error.timestamp));
+      console.log("Original error:", error.originalError);
+      alert(`Sign-in error: ${error.message}`);
+    },
+    timeout: 120000 // 2 minutes timeout (default: 60000ms)
+  }
+);
+```
+
+**Enhanced Usage with Callbacks (Global Alternative):**
+```typescript
+import * as near from "fastintear";
+
 // Enhanced sign in with success and error callbacks
 await near.requestSignIn(
   { contractId: "example.near" },
@@ -666,6 +776,68 @@ const hasDeposit = hasNonZeroDeposit([
 ]); // true
 ```
 
+## Usage Patterns and Best Practices
+
+### When to Use createNearClient vs Global Import
+
+**Use createNearClient when:**
+- Building applications that need multiple NEAR connections
+- Working with different networks simultaneously (mainnet + testnet)
+- Need isolated state management for different parts of your app
+- Building reusable components or libraries
+- Want better testability and separation of concerns
+- Building React applications with multiple wallet connections
+
+**Use Global Import when:**
+- Simple applications with single NEAR connection
+- Quick prototyping or examples
+- Migrating from older versions with minimal changes
+- Static HTML pages with basic functionality
+
+**Use IIFE (Script Tag) when:**
+- Static HTML pages without build tools
+- Quick demos or educational content
+- Browser console experimentation
+- Minimal setup requirements
+
+### Multi-Client Architecture Example
+```typescript
+import { createNearClient } from "fastintear";
+
+// Different clients for different purposes
+const mainnetClient = createNearClient({ networkId: "mainnet" });
+const testnetClient = createNearClient({ networkId: "testnet" });
+
+// Production and development environments
+const prodClient = createNearClient({ 
+  networkId: "mainnet",
+  nodeUrl: "https://rpc.mainnet.fastnear.com/"
+});
+
+const devClient = createNearClient({ 
+  networkId: "testnet",
+  nodeUrl: "https://rpc.testnet.fastnear.com/"
+});
+
+// Different contracts on same network
+const dexClient = createNearClient({ networkId: "mainnet" });
+const nftClient = createNearClient({ networkId: "mainnet" });
+
+await dexClient.requestSignIn({ contractId: "dex.near" });
+await nftClient.requestSignIn({ contractId: "nft-marketplace.near" });
+
+// Independent operations
+await dexClient.sendTx({
+  receiverId: "dex.near",
+  actions: [dexClient.actions.functionCall({ methodName: "swap", args: {} })]
+});
+
+await nftClient.sendTx({
+  receiverId: "nft-marketplace.near", 
+  actions: [nftClient.actions.functionCall({ methodName: "buy_nft", args: {} })]
+});
+```
+
 ## Development Workflow
 
 ### Building
@@ -879,6 +1051,85 @@ near.event.onTx((txStatus) => {
 ```
 
 ### React Integration
+
+**Client-Based React Integration (Preferred):**
+```typescript
+import { createNearClient } from "fastintear";
+import { useEffect, useState } from "react";
+
+function App() {
+  const [accountId, setAccountId] = useState<string | null>(null);
+  const [txStatus, setTxStatus] = useState<string>("");
+  const [nearClient] = useState(() => createNearClient({ networkId: "mainnet" }));
+  
+  useEffect(() => {
+    // Listen for account changes
+    const unsubscribeAccount = nearClient.event.onAccount((newAccountId) => {
+      setAccountId(newAccountId);
+    });
+    
+    // Listen for transaction updates
+    const unsubscribeTx = nearClient.event.onTx((tx) => {
+      setTxStatus(`${tx.txId}: ${tx.status}`);
+    });
+    
+    // Check if already signed in
+    setAccountId(nearClient.accountId());
+    
+    return () => {
+      unsubscribeAccount && nearClient.event.offAccount(unsubscribeAccount);
+      unsubscribeTx && nearClient.event.offTx(unsubscribeTx);
+    };
+  }, [nearClient]);
+
+  const handleConnect = async () => {
+    try {
+      await nearClient.requestSignIn({ contractId: "wrap.near" });
+    } catch (error) {
+      console.error("Connection failed:", error);
+    }
+  };
+  
+  const handleTransfer = async () => {
+    try {
+      // This will require wallet popup due to deposit
+      await nearClient.sendTx({
+        receiverId: "alice.near",
+        actions: [
+          nearClient.actions.transfer("1000000000000000000000000") // 1 NEAR
+        ]
+      });
+    } catch (error) {
+      console.error("Transfer failed:", error);
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await nearClient.signOut();
+    } catch (error) {
+      console.error("Sign out failed:", error);
+    }
+  };
+
+  return (
+    <div>
+      {accountId ? (
+        <div>
+          <p>Connected: {accountId}</p>
+          <button onClick={handleTransfer}>Send 1 NEAR</button>
+          <button onClick={handleSignOut}>Sign Out</button>
+          {txStatus && <p>Transaction: {txStatus}</p>}
+        </div>
+      ) : (
+        <button onClick={handleConnect}>Connect Wallet</button>
+      )}
+    </div>
+  );
+}
+```
+
+**Global React Integration (Alternative):**
 ```typescript
 import * as near from "fastintear";
 import { useEffect, useState } from "react";
@@ -957,6 +1208,56 @@ function App() {
 ```
 
 ### Node.js Server Integration
+
+**Client-Based Server Integration (Preferred):**
+```typescript
+import { createNearClient } from "fastintear";
+
+// Create server client instance
+const serverClient = createNearClient({ 
+  networkId: "mainnet",
+  nodeUrl: "https://rpc.mainnet.fastnear.com/"
+});
+
+// Set up with full access key using update method (needs to be added to client)
+// For now, you would need to use the global approach or extend the client
+
+// Server can sign any transaction type
+async function processUserRequest(userId: string, amount: string) {
+  try {
+    const result = await serverClient.sendTx({
+      receiverId: "token.near",
+      actions: [
+        serverClient.actions.functionCall({
+          methodName: "ft_transfer",
+          args: { 
+            receiver_id: userId,
+            amount: amount
+          },
+          gas: "30000000000000",
+          deposit: "1" // Attach 1 yoctoNEAR
+        })
+      ]
+    });
+    
+    console.log("Transfer completed:", result);
+    return result;
+  } catch (error) {
+    console.error("Server transaction failed:", error);
+    throw error;
+  }
+}
+
+// Monitor transaction status
+serverClient.event.onTx((tx) => {
+  console.log(`Server transaction ${tx.txId}: ${tx.status}`);
+  if (tx.status === "Executed") {
+    // Update database, send notifications, etc.
+  }
+});
+```
+
+**Global Server Integration (Alternative):**
 ```typescript
 import * as near from "fastintear";
 
