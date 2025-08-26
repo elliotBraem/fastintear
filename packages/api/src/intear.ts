@@ -36,7 +36,7 @@ export interface TransactionResult {
 }
 
 export interface WalletAdapterConstructor {
-  walletUrl?: string;
+  walletUrl?: string; // only used for the initial iframe
   targetOrigin?: string;
   onStateUpdate?: (state: any) => void;
   lastState?: any;
@@ -51,6 +51,11 @@ interface SavedData {
   methodNames: string[];
   logoutKey: string;
   networkId: string;
+
+  // the 2 fields below can be undefined if the user has logged in using
+  // an older version of fastintear
+  walletUrl?: string;
+  useBridge?: boolean;
 }
 
 class IntearAdapterError extends Error {
@@ -499,19 +504,14 @@ async function verifySessionStatus(
 export type SignInStep = 'popup_opening' | 'waiting_for_user' | 'processing_result';
 
 export type SignInErrorType =
-  | 'popup_blocked'
   | 'user_cancelled'
   | 'wallet_error'
   | 'network_error'
-  | 'timeout'
   | 'unknown';
 
 export type SuggestedAction =
   | 'retry'
-  | 'check_popup_blocker'
-  | 'try_different_browser'
-  | 'contact_support'
-  | 'check_network';
+  | 'contact_support';
 
 export type SignInError = {
   type: SignInErrorType;
@@ -529,22 +529,22 @@ export interface SignInCallbacks {
 }
 
 export class WalletAdapter {
-  #walletUrl: string;
+  #iframeOriginUrl: string;
   #logoutBridgeService: string;
   #onStateUpdate?: (state: any) => void;
 
   constructor({
-    walletUrl = DEFAULT_WALLET_DOMAIN,
+    walletUrl: iframeOriginUrl = DEFAULT_WALLET_DOMAIN,
     targetOrigin,
     onStateUpdate,
     lastState,
     callbackUrl,
     logoutBridgeService = DEFAULT_LOGOUT_BRIDGE_SERVICE,
   }: WalletAdapterConstructor) {
-    this.#walletUrl = walletUrl;
+    this.#iframeOriginUrl = iframeOriginUrl;
     this.#logoutBridgeService = logoutBridgeService;
     this.#onStateUpdate = onStateUpdate;
-    console.debug("Intear Popup WalletAdapter initialized. URL:", this.#walletUrl);
+    console.debug("Intear Popup WalletAdapter initialized. URL:", this.#iframeOriginUrl);
     if (typeof window !== 'undefined') {
       this.initializeSession().catch(err => {
         console.error("Error during initial session initialization:", err);
@@ -567,50 +567,22 @@ export class WalletAdapter {
     const { onPending, onError, timeout = 60000 } = callbacks || {};
     const privateKey = privateKeyFromRandom();
 
-    let timeoutId: NodeJS.Timeout | null = null;
-
     return new Promise((resolve, reject) => {
       // Step 1: Opening popup
       onPending?.({ step: 'popup_opening', networkId, contractId });
 
-      const popup = window.open(`${this.#walletUrl}/connect`, "_blank", POPUP_FEATURES);
-      if (!popup) {
-        const error = {
-          type: 'popup_blocked' as SignInErrorType,
-          message: 'Popup was blocked by browser',
-          retryable: true,
-          suggestedAction: 'check_popup_blocker' as SuggestedAction,
-          timestamp: Date.now(),
-        };
-        onError?.(error);
-        return reject(new IntearAdapterError("Popup was blocked"));
-      }
+      const iframe = document.createElement("iframe");
+      iframe.src = `${this.#iframeOriginUrl}/wallet-connector-iframe.html`;
+      iframe.style.position = "fixed";
+      iframe.style.inset = "0";
+      iframe.style.width = "100vw";
+      iframe.style.height = "100vh";
+      iframe.style.border = "none";
+      iframe.style.zIndex = "100000";
+      document.body.appendChild(iframe);
 
-      // Step 2: Waiting for user
-      onPending?.({ step: 'waiting_for_user', networkId, contractId });
-
-      // Set up timeout
-      if (timeout > 0) {
-        timeoutId = setTimeout(() => {
-          popup.close();
-          window.removeEventListener("message", listener);
-          clearInterval(checkPopupClosed);
-
-          const error = {
-            type: 'timeout' as SignInErrorType,
-            message: 'Sign-in timed out',
-            retryable: true,
-            suggestedAction: 'retry' as SuggestedAction,
-            timestamp: Date.now(),
-          };
-          onError?.(error);
-          reject(new IntearAdapterError("Sign-in timeout"));
-        }, timeout);
-      }
-
-      let done = false;
       const listener = async (event: MessageEvent) => {
-        if (event.origin !== new URL(this.#walletUrl).origin) {
+        if (event.origin !== new URL(this.#iframeOriginUrl).origin) {
           return;
         }
         if (!event.data || !event.data.type) {
@@ -625,7 +597,7 @@ export class WalletAdapter {
             const nonce = Date.now();
             const signatureString = await generateAuthSignature(privateKey, message, nonce);
             const publicKey = publicKeyFromPrivate(privateKey);
-            popup.postMessage(
+            iframe.contentWindow?.postMessage(
               {
                 type: "signIn",
                 data: {
@@ -636,20 +608,16 @@ export class WalletAdapter {
                   nonce,
                   message,
                   signature: signatureString,
+                  version: "V2",
                 },
               },
-              this.#walletUrl
+              this.#iframeOriginUrl
             );
             break;
           }
           case "connected": {
             // Step 3: Processing result
             onPending?.({ step: 'processing_result', networkId, contractId });
-
-            done = true;
-            popup.close();
-            window.removeEventListener("message", listener);
-            if (timeoutId) clearTimeout(timeoutId);
 
             const accounts = event.data.accounts as Account[];
             if (!accounts || accounts.length === 0) {
@@ -666,6 +634,7 @@ export class WalletAdapter {
             const functionCallKeyAdded = event.data.functionCallKeyAdded;
             const logoutKey = event.data.logoutKey;
 
+            const useBridge = event.data.useBridge;
             const dataToSave: SavedData = {
               accounts,
               key: privateKey,
@@ -673,8 +642,16 @@ export class WalletAdapter {
               methodNames: functionCallKeyAdded ? (methodNames ?? []) : [],
               logoutKey: logoutKey,
               networkId: networkId,
+              walletUrl: event.origin,
+              useBridge: useBridge,
             };
             window.localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+            iframe.contentWindow?.postMessage(
+              {
+                type: "close",
+              },
+              this.#iframeOriginUrl
+            );
 
             const newState = {
               accountId: accounts[0].accountId,
@@ -705,47 +682,40 @@ export class WalletAdapter {
             break;
           }
           case "error": {
-            done = true;
-            popup.close();
-            window.removeEventListener("message", listener);
-            if (timeoutId) clearTimeout(timeoutId);
-
-            const errorMessage = event.data.message || "Unknown error from wallet popup";
-            const error = {
-              type: 'wallet_error' as SignInErrorType,
-              message: errorMessage,
-              retryable: true,
-              suggestedAction: 'contact_support' as SuggestedAction,
-              originalError: event.data,
-              timestamp: Date.now(),
-            };
-            onError?.(error);
-            reject(new IntearAdapterError(errorMessage));
+            console.error("Error from connect popup", event.data.message);
+            iframe.contentWindow?.postMessage(
+              {
+                type: "close",
+                message: event.data.message,
+              },
+              this.#iframeOriginUrl
+            );
             break;
+          }
+          case "close": {
+            window.removeEventListener("message", listener);
+            iframe.remove();
+            if (event.data.message) {
+              const errorMessage = event.data.message || "Unknown error from wallet popup";
+              const error = {
+                type: 'wallet_error' as SignInErrorType,
+                message: errorMessage,
+                retryable: true,
+                suggestedAction: 'contact_support' as SuggestedAction,
+                originalError: event.data,
+                timestamp: Date.now(),
+              };
+              onError?.(error);
+              reject(new IntearAdapterError(errorMessage));
+              break;
+            }
           }
         }
       };
-
       window.addEventListener("message", listener);
-      const checkPopupClosed = setInterval(() => {
-        if (popup.closed) {
-          window.removeEventListener("message", listener);
-          clearInterval(checkPopupClosed);
-          if (timeoutId) clearTimeout(timeoutId);
 
-          if (!done) {
-            const error = {
-              type: 'user_cancelled' as SignInErrorType,
-              message: 'Sign-in canceled - popup closed by user',
-              retryable: true,
-              suggestedAction: 'retry' as SuggestedAction,
-              timestamp: Date.now(),
-            };
-            onError?.(error);
-            reject(new IntearAdapterError("Sign-in canceled - popup closed by user"));
-          }
-        }
-      }, 100);
+      // Step 2: Waiting for user
+      onPending?.({ step: 'waiting_for_user', networkId, contractId });
     });
   }
 
@@ -882,15 +852,100 @@ export class WalletAdapter {
     const privateKey = savedData.key;
     const accountId = savedData.accounts[0].accountId;
 
+    if (savedData.useBridge) {
+      return new Promise((resolve, reject) => {
+        const iframe = document.createElement("iframe");
+        const wsUrl = this.#logoutBridgeService
+          .replace("https://", "wss://")
+          .replace("http://", "ws://");
+        const ws = new WebSocket(`${wsUrl}/api/session/create`);
+        ws.onopen = async () => {
+          console.debug("WebSocket connected for transactions");
+          const transactionsString = JSON.stringify(transactions);
+          const authNonce = Date.now();
+          const signatureString = await generateAuthSignature(
+            savedData.key,
+            transactionsString,
+            authNonce
+          );
+          ws.send(
+            JSON.stringify({
+              type: "signAndSendTransactions",
+              data: {
+                transactions: transactionsString,
+                accountId: savedData.accounts[0].accountId,
+                publicKey: publicKeyFromPrivate(savedData.key),
+                nonce: authNonce,
+                signature: signatureString,
+              },
+            })
+          );
+        };
+        let currentSessionId: string | null = null;
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.session_id) {
+              currentSessionId = data.session_id;
+              console.debug(
+                "Received session ID for send-transactions:",
+                currentSessionId
+              );
+            } else {
+              console.debug("Received send-transactions response:", data);
+              ws.close();
+              if (data.type === "error") {
+                const errorMessage = data.message || "Unknown error from wallet popup";
+                reject(new IntearAdapterError(errorMessage));
+              } else {
+                resolve({ outcomes: data.outcomes });
+              }
+              iframe.remove();
+            }
+          } catch (e) {
+            console.error("Error parsing WebSocket message:", e);
+            reject(new IntearAdapterError("Error parsing WebSocket message", e));
+            iframe.remove();
+          }
+        };
+        ws.onerror = (error) => {
+          console.error("WebSocket error:", error);
+          reject(new IntearAdapterError("WebSocket error", error));
+          iframe.remove();
+        };
+        ws.onclose = () => {
+          console.debug("WebSocket closed for send-transactions");
+          iframe.remove();
+        };
+
+        (async () => {
+          const sessionId = await new Promise((resolveSessionId) => {
+            setInterval(() => {
+              if (currentSessionId) {
+                resolveSessionId(currentSessionId);
+              }
+            }, 100);
+          });
+
+          const walletAppUrl = `intear://send-transactions?session_id=${sessionId}`;
+          console.debug("Opening wallet with URL:", walletAppUrl);
+
+          iframe.style.display = "none";
+          iframe.src = walletAppUrl;
+          document.body.appendChild(iframe);
+        })();
+      });
+    }
+
     return new Promise(async (resolve, reject) => {
-      const popup = window.open(`${this.#walletUrl}/send-transactions`, "_blank", POPUP_FEATURES);
+      const popup = window.open(`${savedData.walletUrl ?? this.#iframeOriginUrl}/send-transactions`, "_blank", POPUP_FEATURES);
       if (!popup) {
         return reject(new IntearAdapterError("Popup was blocked"));
       }
 
       let done = false;
       const listener = async (event: MessageEvent) => {
-        if (event.origin !== new URL(this.#walletUrl).origin) return;
+        if (event.origin !== new URL(savedData.walletUrl ?? this.#iframeOriginUrl).origin) return;
         if (!event.data || !event.data.type) return;
 
         console.debug("Message from send-transactions popup", event.data);
@@ -911,7 +966,7 @@ export class WalletAdapter {
                   signature: signatureString,
                 },
               },
-              this.#walletUrl
+              savedData.walletUrl ?? this.#iframeOriginUrl
             );
             break;
           }
@@ -951,15 +1006,114 @@ export class WalletAdapter {
     const privateKey = savedData.key;
     const accountId = savedData.accounts[0].accountId;
 
+    if (savedData.useBridge) {
+      return new Promise((resolve, reject) => {
+        const iframe = document.createElement("iframe");
+        const wsUrl = this.#logoutBridgeService
+          .replace("https://", "wss://")
+          .replace("http://", "ws://");
+        const ws = new WebSocket(`${wsUrl}/api/session/create`);
+        ws.onopen = async () => {
+          console.debug("WebSocket connected for sign-message");
+          const signMessageString = JSON.stringify({
+            message,
+            recipient,
+            nonce: Array.from(nonce),
+            callbackUrl,
+            state,
+          });
+          const authNonce = Date.now();
+          const signatureString = await generateAuthSignature(
+            privateKey,
+            signMessageString,
+            authNonce
+          );
+          ws.send(
+            JSON.stringify({
+              type: "signMessage",
+              data: {
+                message: signMessageString,
+                accountId: savedData.accounts[0].accountId,
+                publicKey: publicKeyFromPrivate(privateKey),
+                nonce: authNonce,
+                signature: signatureString,
+              },
+            })
+          );
+        };
+        let currentSessionId: string | null = null;
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.session_id) {
+              currentSessionId = data.session_id;
+              console.debug(
+                "Received session ID for sign-message:",
+                currentSessionId
+              );
+            } else {
+              console.debug("Received sign-message response:", data);
+              ws.close();
+              if (data.type === "error") {
+                reject(new Error(data.message));
+              } else {
+                const signatureData = event.data.signature;
+                try {
+                  resolve({
+                    accountId: signatureData.accountId,
+                    publicKey: signatureData.publicKey,
+                    signature: signatureData.signature,
+                  });
+                } catch (e) {
+                  reject(new IntearAdapterError("Failed to process signature from wallet", e));
+                }
+              }
+              iframe.remove();
+            }
+          } catch (e) {
+            console.error("Error parsing WebSocket message:", e);
+            reject(new IntearAdapterError("Error parsing WebSocket message", e));
+            iframe.remove();
+          }
+        };
+        ws.onerror = (error) => {
+          console.error("WebSocket error:", error);
+          reject(new IntearAdapterError("WebSocket error", error));
+          iframe.remove();
+        };
+        ws.onclose = () => {
+          console.debug("WebSocket closed for sign-message");
+          iframe.remove();
+        };
+
+        (async () => {
+          const sessionId = await new Promise((resolveSessionId) => {
+            setInterval(() => {
+              if (currentSessionId) {
+                resolveSessionId(currentSessionId);
+              }
+            }, 100);
+          });
+
+          const walletAppUrl = `intear://sign-message?session_id=${sessionId}`;
+          console.debug("Opening wallet with URL:", walletAppUrl);
+
+          iframe.style.display = "none";
+          iframe.src = walletAppUrl;
+          document.body.appendChild(iframe);
+        })();
+      });
+    }
+
     return new Promise(async (resolve, reject) => {
-      const popup = window.open(`${this.#walletUrl}/sign-message`, "_blank", POPUP_FEATURES);
+      const popup = window.open(`${savedData.walletUrl ?? this.#iframeOriginUrl}/sign-message`, "_blank", POPUP_FEATURES);
       if (!popup) {
         return reject(new IntearAdapterError("Popup was blocked"));
       }
 
       let done = false;
       const listener = async (event: MessageEvent) => {
-        if (event.origin !== new URL(this.#walletUrl).origin) return;
+        if (event.origin !== new URL(savedData.walletUrl ?? this.#iframeOriginUrl).origin) return;
         if (!event.data || !event.data.type) return;
 
         console.debug("Message from sign-message popup", event.data);
@@ -986,7 +1140,7 @@ export class WalletAdapter {
                   signature: signatureString,
                 },
               },
-              this.#walletUrl
+              savedData.walletUrl ?? this.#iframeOriginUrl
             );
             break;
           }
