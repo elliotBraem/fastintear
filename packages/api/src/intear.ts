@@ -642,7 +642,7 @@ export class WalletAdapter {
               methodNames: functionCallKeyAdded ? (methodNames ?? []) : [],
               logoutKey: logoutKey,
               networkId: networkId,
-              walletUrl: event.origin,
+              walletUrl: event.data.walletUrl,
               useBridge: useBridge,
             };
             window.localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
