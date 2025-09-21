@@ -5,11 +5,63 @@ import pkg from './package.json'
 
 const globalName = 'near'
 
-// Aids in certain guards on the global's mutability
 const footerRedefiningGlobal = `
+// Check URL parameters for safety mode
+const urlParams = new URLSearchParams(window.location.search);
+const useMemory = urlParams.has('memory') || urlParams.has('safe');
+
+// Create global near client with appropriate state management
+const globalNearClient = near.createNearClient({ 
+  networkId: "mainnet",
+  isolateState: useMemory // Safety mode if ?memory or ?safe in URL
+});
+
+// Create global near object
+const globalNear = {
+  // Core methods
+  config: globalNearClient.config,
+  requestSignIn: globalNearClient.requestSignIn,
+  signOut: globalNearClient.signOut,
+  sendTx: globalNearClient.sendTx,
+  signMessage: globalNearClient.signMessage,
+  view: globalNearClient.view,
+  queryAccount: globalNearClient.queryAccount,
+  queryBlock: globalNearClient.queryBlock,
+  queryAccessKey: globalNearClient.queryAccessKey,
+  queryTx: globalNearClient.queryTx,
+  localTxHistory: globalNearClient.localTxHistory,
+  sendRpc: globalNearClient.sendRpc,
+  
+  // State accessors
+  accountId: globalNearClient.accountId,
+  publicKey: globalNearClient.publicKey,
+  authStatus: globalNearClient.authStatus,
+  selected: globalNearClient.selected,
+  
+  // Action helpers
+  actions: globalNearClient.actions,
+  
+  // Utils and exports
+  utils: globalNearClient.utils,
+  exp: globalNearClient.exp,
+  
+  // Event system
+  event: {
+    onAccount: (callback) => globalNearClient.subscribe((state) => {
+      if (state.accountId) callback(state.accountId);
+    }),
+    onTx: (callback) => globalNearClient.onTx(callback),
+    offAccount: () => {}, // Legacy compatibility
+    offTx: () => {} // Legacy compatibility
+  },
+  
+  // Client creation function
+  createNearClient: near.createNearClient
+};
+
 try {
   Object.defineProperty(globalThis, '${globalName}', {
-    value: ${globalName},    
+    value: globalNear,    
     enumerable: true,
     configurable: false,
   });
@@ -18,7 +70,15 @@ try {
   throw error;
 }
 
-window.$$ = near.utils.convertUnit;
+// Convenience utility
+window.$$ = globalNear.utils.convertUnit;
+
+if (useMemory) {
+  console.log('🔒 FastINTEAR: Safe mode (memory-only state)');
+} else {
+  console.log('💾 FastINTEAR: Persistent mode (localStorage)');
+  console.log('💡 Use ?memory for safe mode');
+}
 `;
 
 export default defineConfig([

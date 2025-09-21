@@ -1,200 +1,170 @@
 import * as near from "./near.js";
 import { 
   type NetworkConfig,
-  type AppState,
-  type TxHistory,
+  type WalletState,
   type TxStatus,
-  type EventsType,
+  type StateManager,
+  type ExternalStateManager,
+  type StateChangeCallbacks,
   NETWORKS,
   DEFAULT_NETWORK_ID,
   WIDGET_URL,
-  _state,
-  _config
+  LocalStorageStateManager,
+  MemoryStateManager,
+  ExternalStateManagerWrapper,
+  TxHistoryManager
 } from "./state.js";
 import { WalletAdapter } from "./intear.js";
 import { publicKeyFromPrivate } from "@fastnear/utils";
 
+export interface ClientConfig {
+  networkId?: string;
+  stateManager?: StateManager | ExternalStateManager;
+  callbacks?: StateChangeCallbacks;
+  isolateState?: boolean; // Use memory state manager for complete isolation
+}
+
 /**
- * Creates a NEAR client instance with isolated state
+ * Creates a NEAR client instance with modern state management
  */
-export function createNearClient(initialConfig?: Partial<NetworkConfig>) {
-  // Create isolated state for this client instance
-  const clientState: AppState = {
-    accountId: null,
-    privateKey: null,
-    lastWalletId: null,
-    publicKey: null,
-    accessKeyContractId: null,
+export function createNearClient(config: ClientConfig = {}) {
+  const networkId = config.networkId || DEFAULT_NETWORK_ID;
+  const networkConfig: NetworkConfig = {
+    ...NETWORKS[networkId],
+    networkId,
   };
 
-  let clientConfig: NetworkConfig = {
-    ...NETWORKS[initialConfig?.networkId || DEFAULT_NETWORK_ID],
-    ...initialConfig,
-  };
+  // Determine state manager
+  let stateManager: StateManager;
+  if (config.stateManager) {
+    // If it's an ExternalStateManager, wrap it
+    if ('subscribe' in config.stateManager) {
+      stateManager = config.stateManager as StateManager;
+    } else {
+      stateManager = new ExternalStateManagerWrapper(config.stateManager as ExternalStateManager);
+    }
+  } else if (config.isolateState) {
+    stateManager = new MemoryStateManager(networkId);
+  } else {
+    stateManager = new LocalStorageStateManager(networkId);
+  }
 
-  let clientTxHistory: TxHistory = {};
+  // Transaction history manager
+  const txHistoryManager = new TxHistoryManager();
+
+  // Current state cache
+  let currentState: WalletState | null = null;
+
+  // Initialize state
+  stateManager.getState().then(state => {
+    currentState = state;
+    if (state && config.callbacks?.onStateChange) {
+      config.callbacks.onStateChange(state);
+    }
+  });
+
+  // Subscribe to state changes
+  const unsubscribeState = stateManager.subscribe((state) => {
+    const previousState = currentState;
+    currentState = state;
+
+    // Trigger callbacks
+    if (config.callbacks?.onStateChange) {
+      config.callbacks.onStateChange(state);
+    }
+
+    // Check for connect/disconnect events
+    if (!previousState?.accountId && state.accountId) {
+      config.callbacks?.onConnect?.({
+        accountId: state.accountId,
+        publicKey: state.publicKey || '',
+      });
+    } else if (previousState?.accountId && !state.accountId) {
+      config.callbacks?.onDisconnect?.();
+    }
+  });
 
   // Create isolated adapter for this client
   const clientAdapter = new WalletAdapter({
-    onStateUpdate: (state: any) => {
-      const { accountId, lastWalletId, privateKey } = state;
-      const newAccountId = accountId || null;
-      if (newAccountId !== clientState.accountId) {
-        clientUpdate({
-          accountId: newAccountId,
-          lastWalletId: lastWalletId || undefined,
-          ...(privateKey ? { privateKey } : {}),
-        });
+    onStateUpdate: async (adapterState: any) => {
+      const { accountId, lastWalletId, privateKey } = adapterState;
+      
+      if (accountId !== currentState?.accountId) {
+        const newState: WalletState = {
+          accountId: accountId || null,
+          publicKey: privateKey ? publicKeyFromPrivate(privateKey) : null,
+          privateKey: privateKey || null,
+          networkId,
+          lastWalletId: lastWalletId || null,
+          accessKeyContractId: currentState?.accessKeyContractId || null,
+        };
+        
+        await stateManager.setState(newState);
       }
     },
     walletUrl: WIDGET_URL,
   });
 
-  // Create isolated events system for this client
-  const clientEvents: EventsType = {
-    _eventListeners: {
-      account: new Set(),
-      tx: new Set(),
-    },
-
-    notifyAccountListeners: (accountId: string) => {
-      clientEvents._eventListeners.account.forEach((callback: any) => {
-        try {
-          callback(accountId);
-        } catch (e) {
-          console.error(e);
-        }
-      });
-    },
-
-    notifyTxListeners: (tx: TxStatus) => {
-      clientEvents._eventListeners.tx.forEach((callback: any) => {
-        try {
-          callback(tx);
-        } catch (e) {
-          console.error(e);
-        }
-      });
-    },
-
-    onAccount: (callback: (accountId: string) => void) => {
-      clientEvents._eventListeners.account.add(callback);
-      return callback;
-    },
-
-    onTx: (callback: (tx: TxStatus) => void): (tx: TxStatus) => void => {
-      clientEvents._eventListeners.tx.add(callback);
-      return callback;
-    },
-
-    offAccount: (callback: (accountId: string) => void): void => {
-      clientEvents._eventListeners.account.delete(callback);
-    },
-
-    offTx: (callback: (tx: TxStatus) => void): void => {
-      clientEvents._eventListeners.tx.delete(callback);
-    }
-  };
-
-  // Client-specific update function
-  const clientUpdate = (newState: Partial<AppState>) => {
-    const oldState = { ...clientState };
-    Object.assign(clientState, newState);
-
-    if (
-      newState.hasOwnProperty("privateKey") &&
-      newState.privateKey !== oldState.privateKey
-    ) {
-      clientState.publicKey = newState.privateKey
-        ? publicKeyFromPrivate(newState.privateKey as string)
-        : null;
-    }
-
-    if (newState.hasOwnProperty("accountId") && newState.accountId !== oldState.accountId) {
-      clientEvents.notifyAccountListeners(newState.accountId as string);
-    }
-
-    if (
-      (newState.hasOwnProperty("lastWalletId") &&
-        newState.lastWalletId !== oldState.lastWalletId) ||
-      (newState.hasOwnProperty("accountId") &&
-        newState.accountId !== oldState.accountId) ||
-      (newState.hasOwnProperty("privateKey") &&
-        newState.privateKey !== oldState.privateKey)
-    ) {
-      clientAdapter.setState({
-        publicKey: clientState.publicKey,
-        accountId: clientState.accountId,
-        lastWalletId: clientState.lastWalletId,
-        networkId: clientConfig.networkId,
-      });
-    }
-  };
-
-  // Override the global functions with client-specific versions
-  const clientSendRpc = async (method: string, params: Record<string, any> | any[]) => {
-    if (!clientConfig?.nodeUrl) {
-      throw new Error("fastnear: client config missing nodeUrl.");
-    }
-    const response = await fetch(clientConfig.nodeUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: `fastnear-${Date.now()}`,
-        method,
-        params,
-      }),
-    });
-    const result = await response.json();
-    if (result.error) {
-      throw new Error(JSON.stringify(result.error));
-    }
-    return result;
-  };
-
-  const withClientState = <T>(fn: () => T): T => {
-    const [originalState, originalConfig] = [{ ..._state }, { ..._config }];
-    Object.assign(_state, clientState);
-    Object.assign(_config, clientConfig);
-    try {
-      return fn();
-    } finally {
-      Object.assign(_state, originalState);
-      Object.assign(_config, originalConfig);
-    }
-  };
 
   // Return client API
   return {
     // State accessors
-    accountId: (): string | null => clientState.accountId,
-    publicKey: (): string | null => clientState.publicKey,
-    authStatus: (): "SignedIn" | "SignedOut" => clientState.accountId ? "SignedIn" : "SignedOut",
+    accountId: (): string | null => currentState?.accountId || null,
+    publicKey: (): string | null => currentState?.publicKey || null,
+    authStatus: (): "SignedIn" | "SignedOut" => currentState?.accountId ? "SignedIn" : "SignedOut",
     
+    // State management
+    getState: (): Promise<WalletState | null> => stateManager.getState(),
+    setState: (state: WalletState): Promise<void> => stateManager.setState(state),
+    clearState: (): Promise<void> => stateManager.clearState(),
+    
+    // State restoration for external management
+    restoreFromExternalState: async (state: {
+      accountId: string;
+      publicKey: string;
+      privateKey?: string;
+      networkId: string;
+    }): Promise<void> => {
+      const walletState: WalletState = {
+        accountId: state.accountId,
+        publicKey: state.publicKey,
+        privateKey: state.privateKey || null,
+        networkId: state.networkId,
+        lastWalletId: null,
+        accessKeyContractId: null,
+      };
+      await stateManager.setState(walletState);
+    },
+
+    // Check if externally managed
+    isExternallyManaged: (): boolean => {
+      return stateManager instanceof ExternalStateManagerWrapper;
+    },
+
     // Config management
     config: (newConfig?: Partial<NetworkConfig>): NetworkConfig => {
       if (newConfig) {
-        if (newConfig.networkId && clientConfig.networkId !== newConfig.networkId) {
-          clientConfig = { ...NETWORKS[newConfig.networkId], networkId: newConfig.networkId };
-          clientUpdate({ accountId: null, privateKey: null, lastWalletId: null });
-          clientTxHistory = {};
+        Object.assign(networkConfig, newConfig);
+        
+        // If network changed, clear state
+        if (newConfig.networkId && networkConfig.networkId !== newConfig.networkId) {
+          stateManager.clearState();
+          txHistoryManager.clearHistory();
         }
-        clientConfig = { ...clientConfig, ...newConfig };
       }
-      return clientConfig;
+      return networkConfig;
     },
 
     // Selection info
     selected: () => {
-      const network = clientConfig.networkId;
-      const nodeUrl = clientConfig.nodeUrl;
-      const walletUrl = clientConfig.walletUrl;
-      const helperUrl = clientConfig.helperUrl;
-      const explorerUrl = clientConfig.explorerUrl;
-      const account = clientState.accountId;
-      const contract = clientState.accessKeyContractId;
-      const publicKey = clientState.publicKey;
+      const network = networkConfig.networkId;
+      const nodeUrl = networkConfig.nodeUrl;
+      const walletUrl = networkConfig.walletUrl;
+      const helperUrl = networkConfig.helperUrl;
+      const explorerUrl = networkConfig.explorerUrl;
+      const account = currentState?.accountId;
+      const contract = currentState?.accessKeyContractId;
+      const publicKey = currentState?.publicKey;
 
       return {
         network,
@@ -209,72 +179,59 @@ export function createNearClient(initialConfig?: Partial<NetworkConfig>) {
     },
 
     // Authentication methods
-    requestSignIn: (
+    requestSignIn: async (
       params: Parameters<typeof near.requestSignIn>[0] = {},
       callbacks: Parameters<typeof near.requestSignIn>[1] = {}
-    ): ReturnType<typeof near.requestSignIn> => 
-      withClientState(async () => {
-        const result = await near.requestSignIn(params, callbacks);
-        
-        // Update client state with results
-        clientUpdate({
-          accountId: _state.accountId,
-          privateKey: _state.privateKey,
-          publicKey: _state.publicKey,
-          accessKeyContractId: _state.accessKeyContractId
-        });
-        
-        return result;
-      }),
+    ): Promise<ReturnType<typeof near.requestSignIn>> => {
+      const result = await near.requestSignIn(params, callbacks);
+      
+      // Update state with results
+      if (result.accountId) {
+        const newState: WalletState = {
+          accountId: result.accountId,
+          publicKey: result.publicKey,
+          privateKey: null, // Will be set by adapter
+          networkId,
+          lastWalletId: null,
+          accessKeyContractId: params.contractId || null,
+        };
+        await stateManager.setState(newState);
+      }
+      
+      return result;
+    },
 
     signOut: async () => {
       await clientAdapter.signOut();
-      clientUpdate({ accountId: null, privateKey: null, accessKeyContractId: null, lastWalletId: null });
+      await stateManager.clearState();
     },
 
     // RPC methods
-    sendRpc: clientSendRpc,
+    sendRpc: near.sendRpc,
     
     // Query methods
-    view: (params: Parameters<typeof near.view>[0]): ReturnType<typeof near.view> => 
-      withClientState(() => near.view(params)),
-
-    queryAccount: (params: Parameters<typeof near.queryAccount>[0]): ReturnType<typeof near.queryAccount> => 
-      withClientState(() => near.queryAccount(params)),
-
-    queryBlock: (params: Parameters<typeof near.queryBlock>[0]): ReturnType<typeof near.queryBlock> => 
-      withClientState(() => near.queryBlock(params)),
-
-    queryAccessKey: (params: Parameters<typeof near.queryAccessKey>[0]): ReturnType<typeof near.queryAccessKey> => 
-      withClientState(() => near.queryAccessKey(params)),
-
-    queryTx: (params: Parameters<typeof near.queryTx>[0]): ReturnType<typeof near.queryTx> => 
-      withClientState(() => near.queryTx(params)),
+    view: near.view,
+    queryAccount: near.queryAccount,
+    queryBlock: near.queryBlock,
+    queryAccessKey: near.queryAccessKey,
+    queryTx: near.queryTx,
 
     // Transaction methods
-    sendTx: (params: Parameters<typeof near.sendTx>[0]): ReturnType<typeof near.sendTx> => 
-      withClientState(async () => {
-        const result = await near.sendTx(params);
-        
-        // Update client state
-        clientUpdate({
-          accountId: _state.accountId,
-          privateKey: _state.privateKey,
-          publicKey: _state.publicKey,
-          accessKeyContractId: _state.accessKeyContractId
-        });
-        
-        return result;
-      }),
-
-    signMessage: (params: Parameters<typeof near.signMessage>[0]): ReturnType<typeof near.signMessage> => 
-      withClientState(() => near.signMessage(params)),
+    sendTx: near.sendTx,
+    signMessage: near.signMessage,
 
     // Transaction history
-    localTxHistory: () => clientTxHistory,
+    localTxHistory: () => txHistoryManager.getHistory(),
 
-    // Events
-    event: clientEvents,
+    // State subscription
+    subscribe: (callback: (state: WalletState) => void): (() => void) => {
+      return stateManager.subscribe(callback);
+    },
+
+    // Transaction subscription
+    onTx: (callback: (tx: TxStatus) => void): (() => void) => {
+      return txHistoryManager.subscribe(callback);
+    },
 
     // Action helpers
     actions: near.actions,
@@ -282,5 +239,10 @@ export function createNearClient(initialConfig?: Partial<NetworkConfig>) {
     // Utils and exports
     utils: near.utils,
     exp: near.exp,
+
+    // Cleanup
+    destroy: () => {
+      unsubscribeState();
+    },
   };
 }

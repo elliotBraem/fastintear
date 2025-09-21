@@ -1,7 +1,15 @@
-// See tsup.config.ts for additional banner/footer js
 export * from "./near";
 export { createNearClient } from "./client";
-export type { NetworkConfig, TxStatus, TxStatusType } from "./state";
+export type { 
+  NetworkConfig, 
+  TxStatus, 
+  TxStatusType,
+  WalletState,
+  StateManager,
+  ExternalStateManager,
+  StateChangeCallbacks
+} from "./state";
+export type { ClientConfig } from "./client";
 
 declare global {
   interface Window {

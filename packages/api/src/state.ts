@@ -5,10 +5,9 @@ import {
 } from "@fastnear/utils";
 import { WalletAdapter } from "./intear";
 
-// export const WIDGET_URL = "https://js.cdn.fastnear.com";
-export const WIDGET_URL = "https://wallet.intear.tech"; // just open the popup -- but this could be federated module
-
+export const WIDGET_URL = "https://wallet.intear.tech";
 export const DEFAULT_NETWORK_ID = "mainnet";
+
 export const NETWORKS = {
   testnet: {
     networkId: "testnet",
@@ -26,18 +25,297 @@ export interface NetworkConfig {
   walletUrl?: string;
   helperUrl?: string;
   explorerUrl?: string;
-
   [key: string]: any;
 }
 
-export interface AppState {
+// Modern WalletState interface - comprehensive state representation
+export interface WalletState {
   accountId: string | null;
-  privateKey: string | null;
-  lastWalletId: string | null;
   publicKey: string | null;
-  accessKeyContractId: string | null;
+  privateKey: string | null;
+  networkId: string;
+  lastWalletId?: string | null;
+  accessKeyContractId?: string | null;
 }
 
+// State change callbacks for reactive state management
+export interface StateChangeCallbacks {
+  onStateChange?: (newState: WalletState) => void;
+  onConnect?: (accountData: { accountId: string; publicKey: string }) => void;
+  onDisconnect?: () => void;
+}
+
+// External state manager interface
+export interface ExternalStateManager {
+  getState(): Promise<WalletState | null>;
+  setState(state: WalletState): Promise<void>;
+  clearState(): Promise<void>;
+}
+
+// Unified state manager interface
+export interface StateManager {
+  getState(): Promise<WalletState | null>;
+  setState(state: WalletState): Promise<void>;
+  clearState(): Promise<void>;
+  subscribe(callback: (state: WalletState) => void): () => void;
+}
+
+// LocalStorage-based state manager implementation
+export class LocalStorageStateManager implements StateManager {
+  private subscribers = new Set<(state: WalletState) => void>();
+  private currentState: WalletState | null = null;
+
+  constructor(private networkId: string = DEFAULT_NETWORK_ID) {
+    this.loadInitialState();
+  }
+
+  private loadInitialState(): void {
+    try {
+      const savedState = lsGet("walletState") as WalletState | null;
+      if (savedState && savedState.networkId === this.networkId) {
+        // Ensure publicKey is derived from privateKey if available
+        if (savedState.privateKey && !savedState.publicKey) {
+          savedState.publicKey = publicKeyFromPrivate(savedState.privateKey);
+        }
+        this.currentState = savedState;
+      }
+    } catch (e) {
+      console.error("Error loading initial state:", e);
+      this.currentState = null;
+    }
+  }
+
+  async getState(): Promise<WalletState | null> {
+    return this.currentState;
+  }
+
+  async setState(state: WalletState): Promise<void> {
+    // Ensure publicKey is derived from privateKey
+    if (state.privateKey && !state.publicKey) {
+      state.publicKey = publicKeyFromPrivate(state.privateKey);
+    }
+
+    this.currentState = state;
+    lsSet("walletState", state);
+
+    // Clear nonce when private key changes
+    if (state.privateKey !== this.currentState?.privateKey) {
+      lsSet("nonce", null);
+    }
+
+    // Notify subscribers
+    this.notifySubscribers(state);
+  }
+
+  async clearState(): Promise<void> {
+    const clearedState: WalletState = {
+      accountId: null,
+      publicKey: null,
+      privateKey: null,
+      networkId: this.networkId,
+      lastWalletId: null,
+      accessKeyContractId: null,
+    };
+
+    this.currentState = clearedState;
+    lsSet("walletState", null);
+    lsSet("nonce", null);
+    lsSet("block", null);
+    
+    // Notify subscribers of cleared state
+    this.notifySubscribers(clearedState);
+  }
+
+  subscribe(callback: (state: WalletState) => void): () => void {
+    this.subscribers.add(callback);
+    
+    // Immediately call with current state if available
+    if (this.currentState) {
+      callback(this.currentState);
+    }
+
+    // Return unsubscribe function
+    return () => {
+      this.subscribers.delete(callback);
+    };
+  }
+
+  private notifySubscribers(state: WalletState): void {
+    this.subscribers.forEach(callback => {
+      try {
+        callback(state);
+      } catch (e) {
+        console.error("Error in state subscriber:", e);
+      }
+    });
+  }
+}
+
+// Memory-based state manager implementation (for testing/isolation)
+export class MemoryStateManager implements StateManager {
+  private subscribers = new Set<(state: WalletState) => void>();
+  private currentState: WalletState | null = null;
+
+  constructor(private networkId: string = DEFAULT_NETWORK_ID) {
+    this.currentState = {
+      accountId: null,
+      publicKey: null,
+      privateKey: null,
+      networkId: this.networkId,
+      lastWalletId: null,
+      accessKeyContractId: null,
+    };
+  }
+
+  async getState(): Promise<WalletState | null> {
+    return this.currentState;
+  }
+
+  async setState(state: WalletState): Promise<void> {
+    // Ensure publicKey is derived from privateKey
+    if (state.privateKey && !state.publicKey) {
+      state.publicKey = publicKeyFromPrivate(state.privateKey);
+    }
+
+    this.currentState = state;
+    this.notifySubscribers(state);
+  }
+
+  async clearState(): Promise<void> {
+    const clearedState: WalletState = {
+      accountId: null,
+      publicKey: null,
+      privateKey: null,
+      networkId: this.networkId,
+      lastWalletId: null,
+      accessKeyContractId: null,
+    };
+
+    this.currentState = clearedState;
+    this.notifySubscribers(clearedState);
+  }
+
+  subscribe(callback: (state: WalletState) => void): () => void {
+    this.subscribers.add(callback);
+    
+    // Immediately call with current state if available
+    if (this.currentState) {
+      callback(this.currentState);
+    }
+
+    // Return unsubscribe function
+    return () => {
+      this.subscribers.delete(callback);
+    };
+  }
+
+  private notifySubscribers(state: WalletState): void {
+    this.subscribers.forEach(callback => {
+      try {
+        callback(state);
+      } catch (e) {
+        console.error("Error in state subscriber:", e);
+      }
+    });
+  }
+}
+
+// External state manager wrapper
+export class ExternalStateManagerWrapper implements StateManager {
+  private subscribers = new Set<(state: WalletState) => void>();
+  private currentState: WalletState | null = null;
+
+  constructor(private externalManager: ExternalStateManager) {
+    this.loadInitialState();
+  }
+
+  private async loadInitialState(): Promise<void> {
+    try {
+      this.currentState = await this.externalManager.getState();
+    } catch (e) {
+      console.error("Error loading external state:", e);
+      this.currentState = null;
+    }
+  }
+
+  async getState(): Promise<WalletState | null> {
+    try {
+      this.currentState = await this.externalManager.getState();
+      return this.currentState;
+    } catch (e) {
+      console.error("Error getting external state:", e);
+      return this.currentState;
+    }
+  }
+
+  async setState(state: WalletState): Promise<void> {
+    try {
+      // Ensure publicKey is derived from privateKey
+      if (state.privateKey && !state.publicKey) {
+        state.publicKey = publicKeyFromPrivate(state.privateKey);
+      }
+
+      await this.externalManager.setState(state);
+      this.currentState = state;
+      this.notifySubscribers(state);
+    } catch (e) {
+      console.error("Error setting external state:", e);
+      throw e;
+    }
+  }
+
+  async clearState(): Promise<void> {
+    try {
+      await this.externalManager.clearState();
+      this.currentState = null;
+      
+      // Notify with null state
+      this.subscribers.forEach(callback => {
+        try {
+          callback({
+            accountId: null,
+            publicKey: null,
+            privateKey: null,
+            networkId: this.currentState?.networkId || DEFAULT_NETWORK_ID,
+            lastWalletId: null,
+            accessKeyContractId: null,
+          });
+        } catch (e) {
+          console.error("Error in state subscriber:", e);
+        }
+      });
+    } catch (e) {
+      console.error("Error clearing external state:", e);
+      throw e;
+    }
+  }
+
+  subscribe(callback: (state: WalletState) => void): () => void {
+    this.subscribers.add(callback);
+    
+    // Immediately call with current state if available
+    if (this.currentState) {
+      callback(this.currentState);
+    }
+
+    // Return unsubscribe function
+    return () => {
+      this.subscribers.delete(callback);
+    };
+  }
+
+  private notifySubscribers(state: WalletState): void {
+    this.subscribers.forEach(callback => {
+      try {
+        callback(state);
+      } catch (e) {
+        console.error("Error in state subscriber:", e);
+      }
+    });
+  }
+}
+
+// Transaction status types and interfaces
 export type TxStatusType = 
   | 'Pending' 
   | 'Included' 
@@ -63,224 +341,59 @@ export interface TxStatus {
 
 export type TxHistory = Record<string, TxStatus>;
 
-export interface EventListeners {
-  account: Set<(accountId: string) => void>;
-  tx: Set<(tx: TxStatus) => void>;
-}
+// Transaction history manager
+export class TxHistoryManager {
+  private txHistory: TxHistory = {};
+  private subscribers = new Set<(tx: TxStatus) => void>();
 
-export interface EventsType {
-  _eventListeners: {
-    account: Set<(accountId: string) => void>;
-    tx: Set<(tx: TxStatus) => void>;
-  };
-  notifyAccountListeners: (accountId: string) => void;
-  notifyTxListeners: (tx: TxStatus) => void;
-  onAccount: (callback: (accountId: string) => void) => (accountId: string) => void;
-  onTx: (callback: (tx: TxStatus) => void) => (tx: TxStatus) => void;
-  offAccount: (callback: (accountId: string) => void) => void;
-  offTx: (callback: (tx: TxStatus) => void) => void;
-}
-
-export interface UnbroadcastedEvents {
-  account: string[];
-  tx: TxStatus[];
-}
-
-export interface WalletAdapterState {
-  publicKey?: string | null;
-  privateKey?: string | null;
-  accountId?: string | null;
-  lastWalletId?: string | null;
-  networkId: string;
-}
-
-
-// Load config from localStorage or default to the network's config
-export let _config: NetworkConfig = lsGet("config") || {
-  ...NETWORKS[DEFAULT_NETWORK_ID]
-};
-
-// Load application state from localStorage
-export let _state: AppState = lsGet("state") || {};
-
-// Triggered by the wallet adapter
-export const onAdapterStateUpdate = (state: WalletAdapterState) => {
-  const { accountId, lastWalletId, privateKey } = state;
-  const newAccountId = accountId || null;
-  if (newAccountId !== _state.accountId) {
-    update({
-      accountId: newAccountId,
-      lastWalletId: lastWalletId || undefined,
-      ...(privateKey ? { privateKey } : {}),
-    });
+  constructor() {
+    this.loadHistory();
   }
-}
 
-export const getWalletAdapterState = (): WalletAdapterState => {
-  return {
-    publicKey: _state.publicKey,
-    accountId: _state.accountId,
-    lastWalletId: _state.lastWalletId,
-    networkId: _config.networkId,
-  };
-}
-
-// We can create an adapter instance here
-export let _adapter = new WalletAdapter({
-  onStateUpdate: onAdapterStateUpdate,
-  walletUrl: WIDGET_URL,
-});
-
-// Attempt to set publicKey if we have a privateKey
-try {
-  _state.publicKey = _state.privateKey
-    ? publicKeyFromPrivate(_state.privateKey)
-    : null;
-} catch (e) {
-  console.error("Error parsing private key:", e);
-  _state.privateKey = null;
-  lsSet("nonce", null);
-}
-
-// Transaction history
-export let _txHistory: TxHistory = lsGet("txHistory") || {};
-
-
-export const _unbroadcastedEvents: UnbroadcastedEvents = {
-  account: [],
-  tx: [],
-};
-
-// events / listeners
-export const events: EventsType = {
-  _eventListeners: {
-    account: new Set(),
-    tx: new Set(),
-  },
-
-  notifyAccountListeners: (accountId: string) => {
-    if (events._eventListeners.account.size === 0) {
-      _unbroadcastedEvents.account.push(accountId);
-      return;
+  private loadHistory(): void {
+    try {
+      this.txHistory = lsGet("txHistory") || {};
+    } catch (e) {
+      console.error("Error loading transaction history:", e);
+      this.txHistory = {};
     }
-    events._eventListeners.account.forEach((callback: any) => {
-      try {
-        callback(accountId);
-      } catch (e) {
-        console.error(e);
-      }
-    });
-  },
+  }
 
-  notifyTxListeners: (tx: TxStatus) => {
-    if (events._eventListeners.tx.size === 0) {
-      _unbroadcastedEvents.tx.push(tx);
-      return;
-    }
-    events._eventListeners.tx.forEach((callback: any) => {
+  updateTx(txStatus: TxStatus): void {
+    const txId = txStatus.txId;
+    this.txHistory[txId] = {
+      ...(this.txHistory[txId] || {}),
+      ...txStatus,
+      updateTimestamp: Date.now(),
+    };
+    
+    lsSet("txHistory", this.txHistory);
+    this.notifySubscribers(this.txHistory[txId]);
+  }
+
+  getHistory(): TxHistory {
+    return this.txHistory;
+  }
+
+  clearHistory(): void {
+    this.txHistory = {};
+    lsSet("txHistory", {});
+  }
+
+  subscribe(callback: (tx: TxStatus) => void): () => void {
+    this.subscribers.add(callback);
+    return () => {
+      this.subscribers.delete(callback);
+    };
+  }
+
+  private notifySubscribers(tx: TxStatus): void {
+    this.subscribers.forEach(callback => {
       try {
         callback(tx);
       } catch (e) {
-        console.error(e);
+        console.error("Error in tx subscriber:", e);
       }
     });
-  },
-
-  onAccount: (callback: (accountId: string) => void) => {
-    events._eventListeners.account.add(callback);
-    if (_unbroadcastedEvents.account.length > 0) {
-      const accountEvent = _unbroadcastedEvents.account;
-      _unbroadcastedEvents.account = [];
-      accountEvent.forEach(events.notifyAccountListeners);
-    }
-    return callback;
-  },
-
-  onTx: (callback: (tx: TxStatus) => void): (tx: TxStatus) => void => {
-    events._eventListeners.tx.add(callback);
-    if (_unbroadcastedEvents.tx.length > 0) {
-      const txEvent = _unbroadcastedEvents.tx;
-      _unbroadcastedEvents.tx = [];
-      txEvent.forEach(events.notifyTxListeners);
-    }
-    return callback;
-  },
-
-  offAccount: (callback: (accountId: string) => void): void => {
-    events._eventListeners.account.delete(callback);
-  },
-
-  offTx: (callback: (tx: TxStatus) => void): void => {
-    events._eventListeners.tx.delete(callback);
   }
-}
-
-// Mutators
-// @todo: in favor of limiting when out of alpha
-//    but haven't given it enough thought ~ mike
-export const update = (newState: Partial<AppState>) => {
-  const oldState = _state;
-  _state = { ..._state, ...newState };
-
-  lsSet("state", {
-    accountId: _state.accountId,
-    privateKey: _state.privateKey,
-    lastWalletId: _state.lastWalletId,
-    accessKeyContractId: _state.accessKeyContractId,
-  });
-
-  if (
-    newState.hasOwnProperty("privateKey") &&
-    newState.privateKey !== oldState.privateKey
-  ) {
-    _state.publicKey = newState.privateKey
-      ? publicKeyFromPrivate(newState.privateKey as string)
-      : null;
-    lsSet("nonce", null);
-  }
-
-  if (newState.hasOwnProperty("accountId") && newState.accountId !== oldState.accountId) {
-    events.notifyAccountListeners(newState.accountId as string);
-  }
-
-  if (
-    (newState.hasOwnProperty("lastWalletId") &&
-      newState.lastWalletId !== oldState.lastWalletId) ||
-    (newState.hasOwnProperty("accountId") &&
-      newState.accountId !== oldState.accountId) ||
-    (newState.hasOwnProperty("privateKey") &&
-      newState.privateKey !== oldState.privateKey)
-  ) {
-    _adapter.setState(getWalletAdapterState());
-  }
-}
-
-export const updateTxHistory = (txStatus: TxStatus) => {
-  const txId = txStatus.txId;
-  _txHistory[txId] = {
-    ...(_txHistory[txId] || {}),
-    ...txStatus,
-    updateTimestamp: Date.now(),
-  };
-  lsSet("txHistory", _txHistory);
-  events.notifyTxListeners(_txHistory[txId]);
-}
-
-export const getConfig = (): NetworkConfig => {
-  return _config;
-}
-
-export const getTxHistory = (): TxHistory => {
-  return _txHistory;
-}
-
-// Exposed "write" functions
-export const setConfig = (newConf: NetworkConfig): void => {
-  _config = { ...NETWORKS[newConf.networkId], ...newConf };
-  lsSet("config", _config);
-}
-
-export const resetTxHistory = (): void => {
-  _txHistory = {};
-  lsSet("txHistory", _txHistory);
 }

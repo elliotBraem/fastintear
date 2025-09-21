@@ -11,7 +11,7 @@
 bun add fastintear
 ```
 
-### Preferred: Client-Based Usage (createNearClient)
+### Recommended: Client-Based Usage (createNearClient)
 
 ```typescript
 import { createNearClient } from "fastintear";
@@ -19,21 +19,25 @@ import { createNearClient } from "fastintear";
 // Create isolated NEAR client instance
 const nearClient = createNearClient({ networkId: "mainnet" });
 
-// Sign in with contract for LAK signing (Promise-based)
-await nearClient.requestSignIn({ contractId: "your-contract.near" });
-
-// Sign in with callbacks for real-time updates
-nearClient.requestSignIn(
-  { contractId: "your-contract.near" },
-  {
-    onSuccess: (result) => {
-      console.log('Signed in successfully:', result.accountId);
-    },
-    onError: (error) => {
-      console.error('Sign-in failed:', error.message);
-    }
+// External state management (e.g., better-near-auth)
+const externalClient = createNearClient({
+  networkId: "mainnet",
+  stateManager: myExternalStateManager,
+  callbacks: {
+    onStateChange: (state) => updateUI(state),
+    onConnect: (account) => showWelcome(account),
+    onDisconnect: () => showSignIn()
   }
-);
+});
+
+// Safe mode (memory-only state)
+const safeClient = createNearClient({ 
+  networkId: "mainnet", 
+  isolateState: true 
+});
+
+// Sign in with contract for LAK signing
+await nearClient.requestSignIn({ contractId: "your-contract.near" });
 
 // Send transaction (uses LAK if conditions met, wallet popup otherwise)
 await nearClient.sendTx({
@@ -48,8 +52,13 @@ await nearClient.sendTx({
   ]
 });
 
+// Listen for state changes
+const unsubscribe = nearClient.subscribe((state) => {
+  console.log("State changed:", state);
+});
+
 // Listen for transaction updates
-nearClient.event.onTx((txStatus) => {
+const unsubscribeTx = nearClient.onTx((txStatus) => {
   console.log(`Transaction ${txStatus.txId}: ${txStatus.status}`);
 });
 
@@ -58,10 +67,12 @@ await nearClient.signOut();
 ```
 
 **Benefits of createNearClient:**
+
 - **Isolated State**: Each client maintains its own authentication and transaction state
 - **Multiple Clients**: Support multiple NEAR connections in one application
-- **Cleaner Architecture**: Better separation of concerns and testability
-- **Same API**: Compatible with existing `near.*` methods
+- **External State Support**: Integration with external state managers like better-near-auth
+- **Safe Patterns**: Memory-only mode for enhanced security
+- **Reactive Updates**: Event-driven state management with callbacks
 
 ### Alternative: Global Import
 
@@ -73,7 +84,7 @@ import {
   requestSignIn, 
   sendTx, 
   actions, 
-  event,
+  createNearClient,
   type Action,
   type TxStatus 
 } from "fastintear";
@@ -81,7 +92,7 @@ import {
 // Configure network
 near.config({ networkId: "mainnet" });
 
-// Sign in with contract for LAK signing (Promise-based)
+// Sign in with contract for LAK signing
 await near.requestSignIn({ contractId: "your-contract.near" });
 
 // Send transaction (uses LAK if conditions met, wallet popup otherwise)
@@ -97,16 +108,11 @@ await near.sendTx({
   ]
 });
 
-// Listen for transaction updates
-near.event.onTx((txStatus: TxStatus) => {
-  console.log(`Transaction ${txStatus.txId}: ${txStatus.status}`);
-});
-
 // Sign out
 await near.signOut();
 ```
 
-### Alternative: Script Tag (IIFE) - Static HTML
+### Browser Console & Static HTML (IIFE)
 
 ```html
 <script src="https://cdn.jsdelivr.net/npm/fastintear/dist/umd/browser.global.js"></script>
@@ -119,32 +125,77 @@ await near.signOut();
 </script>
 ```
 
-## General
+**Safe Mode for Static HTML:**
 
-This is a workspace package from the [@fastnear/js-monorepo](https://github.com/fastnear/js-monorepo) that has the primary responsibility. It's what creates the global `near` object.
+```html
+<!-- Safe mode (memory-only state) -->
+<script src="https://cdn.jsdelivr.net/npm/fastintear/dist/umd/browser.global.js?memory"></script>
 
-## Technical
+<!-- Or use ?safe parameter -->
+<script src="https://cdn.jsdelivr.net/npm/fastintear/dist/umd/browser.global.js?safe"></script>
+```
 
-### Node.js decoupling
+## State Management Options
 
-This library surgically removed ties to Node.js, replacing them with CommonJS and/or modern APIs available in browsers.
+### Default (localStorage)
 
-For instance `Buffer.from()` is an example of a Node.js feature that is commonly used in libraries doing binary encoding, cryptographic operations, and so on. There exists alternative with `Uint8Array` and `TextEncoder` to fill in pieces. This subject could be quite lengthy, and I mention a couple examples just to set the scene.
+- Persists authentication state across browser sessions
+- Suitable for most web applications
+- Automatic session restoration
 
-So it *is* possible to have a web3 library that's decoupled from Node.js
+### Safe Mode (memory-only)
 
-### What this means
+- No persistent state storage
+- Enhanced security for sensitive applications
+- Perfect for browser console experimentation
+- Use `isolateState: true` in createNearClient or `?memory`/`?safe` URL parameters for IIFE
 
-Some emergent behavior comes as a result of this.
+### External State Management
 
-- ability to run code in browser's dev console
-- ability to create web3 projects entirely with static html
+- Integration with external authentication systems
+- Support for better-near-auth and similar libraries
+- Session-aware state synchronization
 
-### `near` global
+```typescript
+interface ExternalStateManager {
+  getState(): Promise<WalletState | null>;
+  setState(state: WalletState): Promise<void>;
+  clearState(): Promise<void>;
+}
 
-In `tsup.config.ts`, you find TypeScript compilations targets. We feel preferential towards the IIFE version. ([MDN docs on IIFE](https://developer.mozilla.org/en-US/docs/Glossary/IIFE)) That file utilizes `esbuild`'s `banner` and `footer` to inject JavaScript that utilizes `Object.defineProperty` in a way to make it "not [configurable](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/defineProperty#configurable)."
+const client = createNearClient({
+  networkId: "mainnet",
+  stateManager: myExternalStateManager
+});
+```
 
-If you look in the `dist` directory under `umd` (Universal Module Definition, but it seems IIFE fits better as a term) there is one file. At the bottom of the file you'll see how the global `near` object can undergo some modifications, potentially hardening it further as this library develops.
+## Technical Features
+
+### Modern State Management
+
+- **Session-aware**: External state manager support for better-near-auth integration
+- **Reactive**: Event-driven state updates with comprehensive callbacks
+- **Isolated**: Multiple client instances with independent state
+- **Safe**: Memory-only mode for enhanced security
+
+### Browser-First Design
+
+- **Node.js Decoupled**: No Node.js dependencies
+- **Modern APIs**: Uses browser-native APIs (Uint8Array, TextEncoder, etc.)
+- **Static HTML Support**: Enables web3 projects with pure static HTML files
+- **Console Ready**: Perfect for browser console experimentation
+
+### Intelligent Transaction Signing
+
+- **LAK Signing**: Local signing for simple function calls with zero deposit
+- **Wallet Signing**: INTEAR Wallet popup for complex transactions
+- **Automatic Decision**: Smart routing based on transaction complexity
+
+### Real-time Features
+
+- **WebSocket Logout Detection**: Real-time logout notifications
+- **Session Verification**: Automatic session validation
+- **Cross-tab Synchronization**: State updates across browser tabs
 
 ## Documentation
 
