@@ -16,7 +16,6 @@ import { publicKeyFromPrivate } from "@fastnear/utils";
 
 /**
  * Creates a NEAR client instance with isolated state
- * This is a simple wrapper that provides client-based usage while keeping existing functionality intact
  */
 export function createNearClient(initialConfig?: Partial<NetworkConfig>) {
   // Create isolated state for this client instance
@@ -132,17 +131,6 @@ export function createNearClient(initialConfig?: Partial<NetworkConfig>) {
     }
   };
 
-  // Client-specific updateTxHistory function
-  const clientUpdateTxHistory = (txStatus: TxStatus) => {
-    const txId = txStatus.txId;
-    clientTxHistory[txId] = {
-      ...(clientTxHistory[txId] || {}),
-      ...txStatus,
-      updateTimestamp: Date.now(),
-    };
-    clientEvents.notifyTxListeners(clientTxHistory[txId]);
-  };
-
   // Override the global functions with client-specific versions
   const clientSendRpc = async (method: string, params: Record<string, any> | any[]) => {
     if (!clientConfig?.nodeUrl) {
@@ -165,7 +153,19 @@ export function createNearClient(initialConfig?: Partial<NetworkConfig>) {
     return result;
   };
 
-  // Return client API - wrapping existing functions with client-specific state
+  const withClientState = <T>(fn: () => T): T => {
+    const [originalState, originalConfig] = [{ ..._state }, { ..._config }];
+    Object.assign(_state, clientState);
+    Object.assign(_config, clientConfig);
+    try {
+      return fn();
+    } finally {
+      Object.assign(_state, originalState);
+      Object.assign(_config, originalConfig);
+    }
+  };
+
+  // Return client API
   return {
     // State accessors
     accountId: (): string | null => clientState.accountId,
@@ -208,18 +208,12 @@ export function createNearClient(initialConfig?: Partial<NetworkConfig>) {
       };
     },
 
-    // Authentication - using the existing function but with client state
-    requestSignIn: async (params = {}, callbacks = {}) => {
-      // We'll need to temporarily override the global state for this call
-      // This is the "simple wrapper" approach - we use existing functions but manage state
-      const originalState = { ..._state };
-      const originalConfig = { ..._config };
-      
-      try {
-        // Temporarily set global state to client state
-        Object.assign(_state, clientState);
-        Object.assign(_config, clientConfig);
-        
+    // Authentication methods
+    requestSignIn: (
+      params: Parameters<typeof near.requestSignIn>[0] = {},
+      callbacks: Parameters<typeof near.requestSignIn>[1] = {}
+    ): ReturnType<typeof near.requestSignIn> => 
+      withClientState(async () => {
         const result = await near.requestSignIn(params, callbacks);
         
         // Update client state with results
@@ -231,81 +225,35 @@ export function createNearClient(initialConfig?: Partial<NetworkConfig>) {
         });
         
         return result;
-      } finally {
-        // Restore original global state
-        Object.assign(_state, originalState);
-        Object.assign(_config, originalConfig);
-      }
-    },
+      }),
 
     signOut: async () => {
       await clientAdapter.signOut();
       clientUpdate({ accountId: null, privateKey: null, accessKeyContractId: null, lastWalletId: null });
     },
 
-    // RPC methods - using client config
+    // RPC methods
     sendRpc: clientSendRpc,
     
-    // Wrap other functions to use client state/config
-    view: (params: any) => {
-      const originalConfig = { ..._config };
-      try {
-        Object.assign(_config, clientConfig);
-        return near.view(params);
-      } finally {
-        Object.assign(_config, originalConfig);
-      }
-    },
+    // Query methods
+    view: (params: Parameters<typeof near.view>[0]): ReturnType<typeof near.view> => 
+      withClientState(() => near.view(params)),
 
-    queryAccount: (params: any) => {
-      const originalConfig = { ..._config };
-      try {
-        Object.assign(_config, clientConfig);
-        return near.queryAccount(params);
-      } finally {
-        Object.assign(_config, originalConfig);
-      }
-    },
+    queryAccount: (params: Parameters<typeof near.queryAccount>[0]): ReturnType<typeof near.queryAccount> => 
+      withClientState(() => near.queryAccount(params)),
 
-    queryBlock: (params: any) => {
-      const originalConfig = { ..._config };
-      try {
-        Object.assign(_config, clientConfig);
-        return near.queryBlock(params);
-      } finally {
-        Object.assign(_config, originalConfig);
-      }
-    },
+    queryBlock: (params: Parameters<typeof near.queryBlock>[0]): ReturnType<typeof near.queryBlock> => 
+      withClientState(() => near.queryBlock(params)),
 
-    queryAccessKey: (params: any) => {
-      const originalConfig = { ..._config };
-      try {
-        Object.assign(_config, clientConfig);
-        return near.queryAccessKey(params);
-      } finally {
-        Object.assign(_config, originalConfig);
-      }
-    },
+    queryAccessKey: (params: Parameters<typeof near.queryAccessKey>[0]): ReturnType<typeof near.queryAccessKey> => 
+      withClientState(() => near.queryAccessKey(params)),
 
-    queryTx: (params: any) => {
-      const originalConfig = { ..._config };
-      try {
-        Object.assign(_config, clientConfig);
-        return near.queryTx(params);
-      } finally {
-        Object.assign(_config, originalConfig);
-      }
-    },
+    queryTx: (params: Parameters<typeof near.queryTx>[0]): ReturnType<typeof near.queryTx> => 
+      withClientState(() => near.queryTx(params)),
 
     // Transaction methods
-    sendTx: async (params: any) => {
-      const originalState = { ..._state };
-      const originalConfig = { ..._config };
-      
-      try {
-        Object.assign(_state, clientState);
-        Object.assign(_config, clientConfig);
-        
+    sendTx: (params: Parameters<typeof near.sendTx>[0]): ReturnType<typeof near.sendTx> => 
+      withClientState(async () => {
         const result = await near.sendTx(params);
         
         // Update client state
@@ -317,21 +265,10 @@ export function createNearClient(initialConfig?: Partial<NetworkConfig>) {
         });
         
         return result;
-      } finally {
-        Object.assign(_state, originalState);
-        Object.assign(_config, originalConfig);
-      }
-    },
+      }),
 
-    signMessage: async (params: any) => {
-      const originalState = { ..._state };
-      try {
-        Object.assign(_state, clientState);
-        return await near.signMessage(params);
-      } finally {
-        Object.assign(_state, originalState);
-      }
-    },
+    signMessage: (params: Parameters<typeof near.signMessage>[0]): ReturnType<typeof near.signMessage> => 
+      withClientState(() => near.signMessage(params)),
 
     // Transaction history
     localTxHistory: () => clientTxHistory,
@@ -339,10 +276,10 @@ export function createNearClient(initialConfig?: Partial<NetworkConfig>) {
     // Events
     event: clientEvents,
 
-    // Action helpers (these are pure functions, no state needed)
+    // Action helpers
     actions: near.actions,
 
-    // Utils and exports (these are pure, no state needed)
+    // Utils and exports
     utils: near.utils,
     exp: near.exp,
   };
