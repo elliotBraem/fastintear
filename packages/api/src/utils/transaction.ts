@@ -1,5 +1,4 @@
 import type { Action, AddKeyAction, DeleteAccountAction, DeleteKeyAction, DeployContractAction, FunctionCallAction, SignedDelegateAction, StakeAction, TransferAction } from "@fastnear/api";
-import { getBorshSchema } from "@fastnear/borsh-schema";
 import { serialize as borshSerialize } from "borsh";
 import { keyFromString } from "./crypto.js";
 import { fromBase58 } from "./misc.js";
@@ -194,5 +193,3 @@ export function mapAction(action: Action): object {
     }
   }
 }
-
-export const SCHEMA = getBorshSchema();
