@@ -1,6 +1,6 @@
 {
   "name": "fastintear",
-  "version": "0.3.0",
+  "version": "0.3.3",
   "description": "Interact with FAST-INT-NEAR Protocol blockchain including transaction signing, utilities, and more.",
   "type": "module",
   "types": "./dist/esm/index.d.ts",
@@ -38,15 +38,19 @@
       "types": "./dist/esm/index.d.ts",
       "import": "./dist/esm/index.js",
       "require": "./dist/cjs/index.cjs"
+    },
+    "./utils": {
+      "types": "./dist/esm/utils/index.d.ts",
+      "import": "./dist/esm/utils/index.js",
+      "require": "./dist/cjs/utils/index.cjs"
     }
   },
   "dependencies": {
-    "@fastnear/utils": "^0.9.7",
-    "@noble/curves": "*",
-    "@noble/hashes": "*",
-    "base58-js": "*",
-    "big.js": "*",
-    "borsh": "*"
+    "@noble/curves": "^2.0.1",
+    "@noble/hashes": "^2.0.1",
+    "base58-js": "^3.0.3",
+    "big.js": "^7.0.1",
+    "borsh": "^2.0.0"
   },
   "devDependencies": {
     "rimraf": "*",

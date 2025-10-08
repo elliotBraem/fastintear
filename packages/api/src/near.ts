@@ -13,7 +13,7 @@ import {
   toBase58,
   toBase64,
   tryParseJson
-} from "@fastnear/utils";
+} from "./utils";
 import Big from "big.js";
 
 import {
@@ -157,8 +157,8 @@ export interface Transaction {
   actions: Array<Action>;
 }
 
-import * as reExportAllUtils from "@fastnear/utils";
-import { sha256 } from "@noble/hashes/sha2";
+import * as reExportAllUtils from "./utils";
+import { sha256 } from "@noble/hashes/sha2.js";
 
 Big.DP = 27;
 export const MaxBlockDelayMs = 1000 * 60 * 60 * 6; // 6 hours
@@ -709,7 +709,6 @@ function hasNonZeroDeposit(actions: Action[]): boolean {
 export const exp = {
   utils: {},
   borsh: reExportAllUtils.exp.borsh,
-  borshSchema: reExportAllUtils.exp.borshSchema.getBorshSchema(),
 };
 
 for (const key in reExportAllUtils) {

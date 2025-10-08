@@ -120,7 +120,7 @@ export default defineConfig([
     }),
     dts: {
       resolve: true,
-      entry: 'src/index.ts',
+      entry: ['src/index.ts', 'src/utils/index.ts'],
     },
     sourcemap: true,
     minify: false,

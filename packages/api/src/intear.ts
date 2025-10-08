@@ -3,9 +3,9 @@ import {
   privateKeyFromRandom,
   publicKeyFromPrivate,
   signHash
-} from "@fastnear/utils";
-import { ed25519 } from "@noble/curves/ed25519";
-import { sha256 } from "@noble/hashes/sha2";
+} from "./utils";
+import { ed25519 } from "@noble/curves/ed25519.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import type { Account, SignatureResult, WalletTxResult } from "./near";
 import { signOut } from "./near";
 

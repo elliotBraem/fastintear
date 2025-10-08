@@ -4,15 +4,13 @@ export * from "./misc.js";
 export * from "./storage.js";
 
 import { serialize, deserialize } from "borsh";
-import * as borshSchema from "@fastnear/borsh-schema";
 
 // exports (or re-exports as well)
 const exp = {
   borsh: {
     serialize,
     deserialize
-  },
-  borshSchema,
+  }
 }
 
 export { exp }

@@ -1,8 +1,8 @@
-import { serialize as borshSerialize, deserialize as borshDeserialize, Schema } from "borsh";
-import { keyFromString } from "./crypto.js";
-import {base64ToBytes, fromBase58, fromBase64, toBase64} from "./misc.js";
+import type { Action, AddKeyAction, DeleteAccountAction, DeleteKeyAction, DeployContractAction, FunctionCallAction, SignedDelegateAction, StakeAction, TransferAction } from "@fastnear/api";
 import { getBorshSchema } from "@fastnear/borsh-schema";
-import type { Action, AddKeyAction, CreateAccountAction, DeleteAccountAction, DeleteKeyAction, DeployContractAction, FunctionCallAction, StakeAction, TransferAction, SignedDelegateAction } from "@fastnear/api";
+import { serialize as borshSerialize } from "borsh";
+import { keyFromString } from "./crypto.js";
+import { fromBase58 } from "./misc.js";
 
 export interface PlainTransaction {
   signerId: string;

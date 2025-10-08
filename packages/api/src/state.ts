@@ -2,8 +2,7 @@ import {
   lsGet,
   lsSet,
   publicKeyFromPrivate,
-} from "@fastnear/utils";
-import { WalletAdapter } from "./intear";
+} from "./utils";
 
 export const WIDGET_URL = "https://wallet.intear.tech";
 export const DEFAULT_NETWORK_ID = "mainnet";
@@ -121,14 +120,14 @@ export class LocalStorageStateManager implements StateManager {
     lsSet("walletState", null);
     lsSet("nonce", null);
     lsSet("block", null);
-    
+
     // Notify subscribers of cleared state
     this.notifySubscribers(clearedState);
   }
 
   subscribe(callback: (state: WalletState) => void): () => void {
     this.subscribers.add(callback);
-    
+
     // Immediately call with current state if available
     if (this.currentState) {
       callback(this.currentState);
@@ -197,7 +196,7 @@ export class MemoryStateManager implements StateManager {
 
   subscribe(callback: (state: WalletState) => void): () => void {
     this.subscribers.add(callback);
-    
+
     // Immediately call with current state if available
     if (this.currentState) {
       callback(this.currentState);
@@ -268,7 +267,7 @@ export class ExternalStateManagerWrapper implements StateManager {
     try {
       await this.externalManager.clearState();
       this.currentState = null;
-      
+
       // Notify with null state
       this.subscribers.forEach(callback => {
         try {
@@ -292,7 +291,7 @@ export class ExternalStateManagerWrapper implements StateManager {
 
   subscribe(callback: (state: WalletState) => void): () => void {
     this.subscribers.add(callback);
-    
+
     // Immediately call with current state if available
     if (this.currentState) {
       callback(this.currentState);
@@ -316,13 +315,13 @@ export class ExternalStateManagerWrapper implements StateManager {
 }
 
 // Transaction status types and interfaces
-export type TxStatusType = 
-  | 'Pending' 
-  | 'Included' 
-  | 'Executed' 
-  | 'Error' 
-  | 'ErrorAfterIncluded' 
-  | 'RejectedByUser' 
+export type TxStatusType =
+  | 'Pending'
+  | 'Included'
+  | 'Executed'
+  | 'Error'
+  | 'ErrorAfterIncluded'
+  | 'RejectedByUser'
   | 'PendingGotTxHash';
 
 export interface TxStatus {
@@ -366,7 +365,7 @@ export class TxHistoryManager {
       ...txStatus,
       updateTimestamp: Date.now(),
     };
-    
+
     lsSet("txHistory", this.txHistory);
     this.notifySubscribers(this.txHistory[txId]);
   }
