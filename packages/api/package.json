@@ -1,6 +1,6 @@
 {
   "name": "fastintear",
-  "version": "0.3.4",
+  "version": "0.3.6",
   "description": "Interact with FAST-INT-NEAR Protocol blockchain including transaction signing, utilities, and more.",
   "type": "module",
   "types": "./dist/esm/index.d.ts",
@@ -51,7 +51,8 @@
     "@noble/hashes": "^2.0.1",
     "base58-js": "^3.0.3",
     "big.js": "^7.0.1",
-    "borsh": "^2.0.0"
+    "borsh": "^2.0.0",
+    "js-base64": "^3.7.8"
   },
   "devDependencies": {
     "rimraf": "*",
