@@ -13,7 +13,7 @@ import {
   toBase58,
   toBase64,
   tryParseJson
-} from "./utils";
+} from "./utils/index.js";
 import Big from "big.js";
 
 import {
@@ -157,7 +157,7 @@ export interface Transaction {
   actions: Array<Action>;
 }
 
-import * as reExportAllUtils from "./utils";
+import * as reExportAllUtils from "./utils/index.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 
 Big.DP = 27;

@@ -2,7 +2,7 @@ import {
   lsGet,
   lsSet,
   publicKeyFromPrivate,
-} from "./utils";
+} from "./utils/index.js";
 
 export const WIDGET_URL = "https://wallet.intear.tech";
 export const DEFAULT_NETWORK_ID = "mainnet";

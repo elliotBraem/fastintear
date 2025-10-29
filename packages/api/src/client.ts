@@ -15,7 +15,7 @@ import {
   TxHistoryManager
 } from "./state.js";
 import { WalletAdapter } from "./intear.js";
-import { publicKeyFromPrivate } from "./utils";
+import { publicKeyFromPrivate } from "./utils/index.js";
 
 export interface ClientConfig {
   networkId?: string;

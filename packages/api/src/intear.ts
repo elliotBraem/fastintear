@@ -3,11 +3,11 @@ import {
   privateKeyFromRandom,
   publicKeyFromPrivate,
   signHash
-} from "./utils";
+} from "./utils/index.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import type { Account, SignatureResult, WalletTxResult } from "./near";
-import { signOut } from "./near";
+import type { Account, SignatureResult, WalletTxResult } from "./near.js";
+import { signOut } from "./near.js";
 
 const DEFAULT_WALLET_DOMAIN = "https://wallet.intear.tech";
 const DEFAULT_LOGOUT_BRIDGE_SERVICE = "https://logout-bridge-service.intear.tech";

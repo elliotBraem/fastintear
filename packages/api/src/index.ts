@@ -1,5 +1,5 @@
-export * from "./near";
-export { createNearClient } from "./client";
+export * from "./near.js";
+export { createNearClient } from "./client.js";
 export type { 
   NetworkConfig, 
   TxStatus, 
@@ -8,14 +8,5 @@ export type {
   StateManager,
   ExternalStateManager,
   StateChangeCallbacks
-} from "./state";
-export type { ClientConfig } from "./client";
-
-declare global {
-  interface Window {
-    // @ts-ignore - this will resolve properly in browser
-    near: typeof import("fastintear");
-
-    // $$: typeof NearGlobal.utils.convertUnit;
-  }
-}
+} from "./state.js";
+export type { ClientConfig } from "./client.js";
