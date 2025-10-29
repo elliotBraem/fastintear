@@ -1,13 +1,14 @@
+import { ed25519 } from "@noble/curves/ed25519.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import type { Account, SignatureResult, WalletTxResult } from "./near.js";
+import { signOut } from "./near.js";
 import {
+  bytesToBase64,
   fromBase58,
   privateKeyFromRandom,
   publicKeyFromPrivate,
   signHash
 } from "./utils/index.js";
-import { ed25519 } from "@noble/curves/ed25519.js";
-import { sha256 } from "@noble/hashes/sha2.js";
-import type { Account, SignatureResult, WalletTxResult } from "./near.js";
-import { signOut } from "./near.js";
 
 const DEFAULT_WALLET_DOMAIN = "https://wallet.intear.tech";
 const DEFAULT_LOGOUT_BRIDGE_SERVICE = "https://logout-bridge-service.intear.tech";
@@ -1059,10 +1060,14 @@ export class WalletAdapter {
               } else {
                 const signatureData = event.data.signature;
                 try {
+                  const sigParts = signatureData.signature.split(":");
+                  const base58Sig = sigParts[1];
+                  const signatureBytes = fromBase58(base58Sig);
+                  const base64Sig = bytesToBase64(signatureBytes);
                   resolve({
                     accountId: signatureData.accountId,
                     publicKey: signatureData.publicKey,
-                    signature: signatureData.signature,
+                    signature: base64Sig,
                   });
                 } catch (e) {
                   reject(new IntearAdapterError("Failed to process signature from wallet", e));
@@ -1150,10 +1155,14 @@ export class WalletAdapter {
             window.removeEventListener("message", listener);
             const signatureData = event.data.signature;
             try {
+              const sigParts = signatureData.signature.split(":");
+              const base58Sig = sigParts[1];
+              const signatureBytes = fromBase58(base58Sig);
+              const base64Sig = bytesToBase64(signatureBytes);
               resolve({
                 accountId: signatureData.accountId,
                 publicKey: signatureData.publicKey,
-                signature: signatureData.signature,
+                signature: base64Sig,
               });
             } catch (e) {
               reject(new IntearAdapterError("Failed to process signature from wallet", e));
